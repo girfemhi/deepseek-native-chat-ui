@@ -27,6 +27,7 @@ struct ChatCustomizationParameters {
     var onWillDisplayCell: ((Message) -> Void)?
     var onTransactionReady: ((TableUpdateTransaction) -> Void)?
     var onLiveLocationBroadcast: ((LiveLocationBroadcastEvent) -> Void)?
+    var attachmentTapHandler: ((Attachment, @escaping (Attachment) -> Void) -> Void)?
 
     var olderMessagesPaginationHandler: PaginationHandler?
     var newerMessagesPaginationHandler: PaginationHandler?
@@ -76,6 +77,10 @@ struct MessageCustomizationParameters {
 struct InputViewCustomizationParameters {
     var externalInputText: String? // External → Internal
     var onInputTextChange: ((String) -> Void)? // Internal → External
+    var agentInputAccessory: (() -> AnyView)?
+    var inputEnabled = true
+    var sendDisabled = false
+    var sendCommitMode: SendCommitMode = .immediate
     var availableInputs: [AvailableInputType] = [.text, .audio, .media]
     var recorderSettings = RecorderSettings()
     var audioRecordingMode: AudioRecordingMode = .holdToRecord

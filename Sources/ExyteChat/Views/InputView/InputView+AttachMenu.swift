@@ -41,17 +41,21 @@ extension InputView {
     var leftButton: some View {
         let items = attachMenuItems
 
-        if items.count > 1 {
-            attachMenuButton(items: items)
-        } else if let item = items.first, item.action == .photo {
-            menuButton(action: .photo, image: theme.images.inputView.attach)
-        } else if let item = items.first, item.action == .giphy {
-            menuButton(action: .giphy, image: theme.images.inputView.sticker)
-        } else if let item = items.first, item.action == .document {
-            menuButton(action: .document, image: theme.images.attachMenu.document)
-        } else if let item = items.first, item.action == .location {
-            menuButton(action: .location, image: theme.images.attachMenu.location)
+        Group {
+            if items.count > 1 {
+                attachMenuButton(items: items)
+            } else if let item = items.first, item.action == .photo {
+                menuButton(action: .photo, image: theme.images.inputView.attach)
+            } else if let item = items.first, item.action == .giphy {
+                menuButton(action: .giphy, image: theme.images.inputView.sticker)
+            } else if let item = items.first, item.action == .document {
+                menuButton(action: .document, image: theme.images.attachMenu.document)
+            } else if let item = items.first, item.action == .location {
+                menuButton(action: .location, image: theme.images.attachMenu.location)
+            }
         }
+        .disabled(!viewModel.inputEnabled || viewModel.isCommitting)
+        .opacity(viewModel.inputEnabled && !viewModel.isCommitting ? 1 : 0.42)
     }
 
     var attachMenuPopupId: String {

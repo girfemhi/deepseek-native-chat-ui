@@ -499,3 +499,41 @@ public struct ChatTheme: Sendable {
         }
     }
 }
+
+public extension ChatTheme {
+    /// A semantic light/dark theme for agent clients with a restrained indigo accent.
+    static var agentDefault: ChatTheme {
+        let accent = Color.indigo
+        return ChatTheme(
+            colors: .init(
+                mainBG: Color(uiColor: .systemBackground),
+                mainTint: accent,
+                mainText: Color(uiColor: .label),
+                mainCaptionText: Color(uiColor: .secondaryLabel),
+                messageMyBG: accent,
+                messageReadStatus: accent.opacity(0.75),
+                messageMyText: .white,
+                messageMyTimeText: .white.opacity(0.68),
+                messageFriendBG: Color(uiColor: .secondarySystemBackground),
+                messageFriendText: Color(uiColor: .label),
+                messageFriendTimeText: Color(uiColor: .secondaryLabel),
+                messageSystemBG: Color(uiColor: .tertiarySystemBackground),
+                messageSystemText: Color(uiColor: .label),
+                messageSystemTimeText: Color(uiColor: .secondaryLabel),
+                inputBG: Color(uiColor: .secondarySystemBackground),
+                inputText: Color(uiColor: .label),
+                inputPlaceholderText: Color(uiColor: .placeholderText),
+                inputSignatureBG: Color(uiColor: .secondarySystemBackground),
+                inputSignatureText: Color(uiColor: .label),
+                inputSignaturePlaceholderText: Color(uiColor: .placeholderText),
+                menuBG: Color(uiColor: .secondarySystemBackground),
+                menuText: Color(uiColor: .label),
+                menuTextDelete: .red,
+                statusError: .red,
+                statusGray: Color(uiColor: .secondaryLabel),
+                sendButtonBackground: accent,
+                recordDot: .red
+            )
+        )
+    }
+}

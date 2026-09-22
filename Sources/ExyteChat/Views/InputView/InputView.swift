@@ -49,10 +49,11 @@ struct InputView: View {
     }
 
     var body: some View {
-        VStack {
+        VStack(spacing: 4) {
             viewOnTop
                 .padding(.top, 6)
                 .transition(.move(edge: .bottom))
+                .allowsHitTesting(viewModel.inputEnabled && !viewModel.isCommitting)
 
             HStack(alignment: .bottom, spacing: 10) {
                 HStack(alignment: .bottom, spacing: 0) {
@@ -61,8 +62,9 @@ struct InputView: View {
                     rightView
                 }
                 .background {
-                    RoundedRectangle(cornerRadius: 18)
-                        .fill(style == .message ? theme.colors.inputBG : theme.colors.inputSignatureBG)
+                    ComposerSurface(
+                        color: style == .message ? theme.colors.inputBG : theme.colors.inputSignatureBG
+                    )
                 }
                 .frameGetter($inputBarFrame)
 
@@ -71,6 +73,8 @@ struct InputView: View {
             .padding(MessageView.horizontalScreenEdgePadding, 8)
         }
         .background(backgroundColor)
+        .disabled(!viewModel.inputEnabled)
+        .opacity(viewModel.inputEnabled ? 1 : 0.55)
         .onAppear {
             viewModel.recordingPlayer = recordingPlayer
             viewModel.setRecorderSettings(recorderSettings: recorderSettings)
@@ -116,6 +120,7 @@ struct InputView: View {
                     availableInputs: availableInputs,
                     localization: localization
                 )
+                .disabled(!viewModel.inputEnabled)
             }
         }
         .frame(minHeight: 48)
@@ -183,10 +188,20 @@ struct InputView: View {
         Button {
             onAction(.send)
         } label: {
-            theme.images.inputView.arrowSend
-                .viewSize(48)
-                .circleBackground(theme.colors.sendButtonBackground)
+            Group {
+                if viewModel.isCommitting {
+                    ProgressView()
+                        .tint(theme.colors.mainTint)
+                        .viewSize(48)
+                } else {
+                    theme.images.inputView.arrowSend
+                        .viewSize(48)
+                        .circleBackground(theme.colors.sendButtonBackground)
+                }
+            }
         }
+        .disabled(viewModel.sendDisabled || viewModel.isCommitting || !state.canSend)
+        .opacity(viewModel.sendDisabled || viewModel.isCommitting || !state.canSend ? 0.42 : 1)
     }
 
     var addButton: some View {
@@ -198,6 +213,7 @@ struct InputView: View {
                 .circleBackground(theme.colors.sendButtonBackground)
                 .padding(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 8))
         }
+        .disabled(!viewModel.inputEnabled || viewModel.isCommitting)
     }
 
     var clearTextButton: some View {
@@ -237,5 +253,27 @@ struct InputView: View {
 
     func isLocationAvailable() -> Bool {
         availableInputs.contains(AvailableInputType.staticLocation) || availableInputs.contains(AvailableInputType.liveLocation)
+    }
+}
+
+private struct ComposerSurface: View {
+    let color: Color
+
+    var body: some View {
+        if #available(iOS 26.0, *) {
+            Color.clear
+                .glassEffect(.regular, in: .rect(cornerRadius: 22))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 22)
+                        .fill(color.opacity(0.34))
+                }
+        } else {
+            RoundedRectangle(cornerRadius: 22)
+                .fill(.regularMaterial)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 22)
+                        .fill(color.opacity(0.72))
+                }
+        }
     }
 }

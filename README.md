@@ -179,6 +179,47 @@ Here `params` is an [`InputViewBuilderParameters`](./Sources/ExyteChat/Views/Cha
 - `inputViewActionClosure` for calling on taps on your custom buttons. For example, call `inputViewActionClosure(.send)` if you want to send your message with your own button, then the library will reset the text and attachments and call the `didSendMessage` sending closure   
 - `dismissKeyboardClosure` - call this to dismiss keyboard    
 
+### Agent composer controls and acknowledged delivery
+
+This fork keeps the built-in input view (photos, camera, documents, audio,
+locations, reply and Giphy) while allowing an agent client to add model or task
+controls above it:
+
+```swift
+ChatView(messages: messages) { draft in
+    legacySend(draft)
+}
+.agentInputAccessory {
+    AgentModelAndTaskStatusView()
+}
+.inputEnabled(isComposerAvailable)
+.sendDisabled(isTaskRunning)
+.sendCommitMode(.deferred { draft in
+    await agent.submitAndConfirm(draft)
+})
+.attachmentTapHandler { attachment, openDefault in
+    Task {
+        if let localAttachment = await authenticatedAttachmentCache.resolve(attachment) {
+            openDefault(localAttachment)
+        }
+    }
+}
+```
+
+The default `.immediate` mode remains source-compatible with upstream. In
+`.deferred` mode, the async closure is the only host submission callback. A
+successful acknowledgement clears the submitted snapshot; a failure retains it
+for retry with the same draft ID and creation date. Text typed while waiting for
+acknowledgement is preserved. An attachment handler may resolve private media to
+a local URL and call `openDefault`, or present documents itself without calling
+the default viewer.
+
+Use `.localization(.simplifiedChinese)` and `.chatTheme(.agentDefault)` for the
+included semantic Chinese/indigo agent appearance. Giphy still requires the
+host application to supply its own API key. To enable every built-in input,
+pass `.setAvailableInputs(Array(AvailableInputType.allCases))`; omit `.giphy`
+when the host has no Giphy key.
+
 ## Custom message menu
 Long tap on a message will display a menu for this message (can be turned off, see Modifiers). To define custom message menu actions declare an enum conforming to `MessageMenuAction`. Then the library will show your custom menu options on long tap on message instead of default ones, if you pass your enum's name to it (see code sample). Once the action is selected special callback will be called. Here is a simple example:
 ```swift

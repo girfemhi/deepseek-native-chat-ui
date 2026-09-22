@@ -22,13 +22,23 @@ final class InputViewModel: ObservableObject {
     @Published var mediaPickerMode = MediaPickerMode.photos
 
     @Published var showActivityIndicator = false
+    @Published var isCommitting = false
+
+    var inputEnabled = true
+    var sendDisabled = false
+    var sendCommitMode: SendCommitMode = .immediate
 
     var recordingPlayer: RecordingPlayer?
     var didSendMessage: ((DraftMessage) -> Void)?
+    var didCommitMessage: ((DraftMessage) -> Void)?
 
     private var recorder = Recorder()
 
     private var saveEditingClosure: ((String) -> Void)?
+    private var attachmentRevision = 0
+    private var pendingDraft: DraftMessage?
+    private var pendingDraftText: String?
+    private var pendingAttachmentRevision: Int?
 
     private var recordPlayerSubscription: AnyCancellable?
     private var subscriptions = Set<AnyCancellable>()
@@ -57,14 +67,18 @@ final class InputViewModel: ObservableObject {
         showDocumentPicker = false
         showLocationPicker = false
         saveEditingClosure = nil
-        subscribeValidation()
+        pendingDraft = nil
+        pendingDraftText = nil
+        pendingAttachmentRevision = nil
     }
 
     func send() {
+        guard inputEnabled, !sendDisabled, !isCommitting, canSubmitDraft else { return }
+        isCommitting = true
         Task {
             await recorder.stopRecording()
             await recordingPlayer?.reset()
-            sendMessage()
+            await sendMessage()
         }
     }
 
@@ -80,6 +94,13 @@ final class InputViewModel: ObservableObject {
     }
 
     private func inputViewActionInternal(_ action: InputViewAction) {
+        guard inputEnabled else { return }
+        if isCommitting {
+            return
+        }
+        if case .send = action, sendDisabled {
+            return
+        }
         switch action {
         case .giphy:
             showGiphyPicker = true
@@ -181,6 +202,7 @@ private extension InputViewModel {
 
     func subscribeValidation() {
         $attachments.sink { [weak self] _ in
+            self?.attachmentRevision += 1
             self?.validateDraft()
         }
         .store(in: &subscriptions)
@@ -220,11 +242,9 @@ private extension InputViewModel {
 
 private extension InputViewModel {
 
-    func sendMessage() {
-        showActivityIndicator = true
-        // live location shares need a stable id upfront so subsequent location updates can find this message again
-        let messageId = (attachments.liveLocation != nil) ? UUID().uuidString : nil
-        let draft = DraftMessage(
+    func makeDraft(deferred: Bool) -> DraftMessage {
+        let messageId = deferred || attachments.liveLocation != nil ? UUID().uuidString : nil
+        return DraftMessage(
             id: messageId,
             text: text,
             medias: attachments.medias,
@@ -236,8 +256,69 @@ private extension InputViewModel {
             replyMessage: attachments.replyMessage,
             createdAt: Date()
         )
-        didSendMessage?(draft)
-        showActivityIndicator = false
-        reset()
+    }
+
+    func sendMessage() async {
+        showActivityIndicator = true
+        let isDeferred: Bool
+        switch sendCommitMode {
+        case .immediate: isDeferred = false
+        case .deferred: isDeferred = true
+        }
+        let canReusePendingDraft = pendingDraftText == text
+            && pendingAttachmentRevision == attachmentRevision
+        let draft = canReusePendingDraft ? (pendingDraft ?? makeDraft(deferred: isDeferred)) : makeDraft(deferred: isDeferred)
+        let submittedAttachmentRevision = attachmentRevision
+
+        switch sendCommitMode {
+        case .immediate:
+            didSendMessage?(draft)
+            showActivityIndicator = false
+            reset()
+            isCommitting = false
+
+        case .deferred(let commit):
+            let acknowledged = await commit(draft)
+            if acknowledged {
+                if text == draft.text {
+                    text = ""
+                }
+                if attachmentRevision == submittedAttachmentRevision {
+                    attachments = InputViewAttachments()
+                }
+                state = hasDraftContent ? .hasTextOrMedia : .empty
+                didCommitMessage?(draft)
+                pendingDraft = nil
+                pendingDraftText = nil
+                pendingAttachmentRevision = nil
+            } else {
+                pendingDraft = draft
+                pendingDraftText = draft.text
+                pendingAttachmentRevision = submittedAttachmentRevision
+            }
+            showActivityIndicator = false
+            isCommitting = false
+        }
+    }
+
+    var hasDraftContent: Bool {
+        !text.isEmpty
+            || !attachments.medias.isEmpty
+            || !attachments.documents.isEmpty
+            || attachments.giphyMedia != nil
+            || attachments.staticLocation != nil
+            || attachments.liveLocation != nil
+            || attachments.recording != nil
+            || attachments.replyMessage != nil
+    }
+
+    var canSubmitDraft: Bool {
+        state.canSend
+            || !text.isEmpty
+            || !attachments.medias.isEmpty
+            || attachments.giphyMedia != nil
+            || !attachments.documents.isEmpty
+            || attachments.staticLocation != nil
+            || attachments.liveLocation != nil
     }
 }

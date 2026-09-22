@@ -7,7 +7,7 @@
 
 import Foundation
 
-public struct ChatLocalization: Hashable {
+public struct ChatLocalization: Hashable, Sendable {
     public var inputPlaceholder: String
     public var signatureText: String
     public var cancelButtonText: String
@@ -96,6 +96,32 @@ public struct ChatLocalization: Hashable {
             liveLocationUpdatedJustNowText: String(localized: "updated just now"),
             liveLocationUpdatedMinutesAgoFormat: String(localized: "updated %d min ago"),
             openInMapsText: String(localized: "Open in Maps")
+        )
+    }
+
+    /// Complete Simplified Chinese copy for all built-in chat surfaces.
+    public static var simplifiedChinese: ChatLocalization {
+        ChatLocalization(
+            inputPlaceholder: "发送消息",
+            signatureText: "添加说明",
+            cancelButtonText: "取消",
+            recentToggleText: "最近项目",
+            waitingForNetwork: "正在等待网络",
+            recordingText: "正在录音…",
+            replyToText: "回复",
+            attachMediaText: "照片与视频",
+            attachGifText: "GIF",
+            attachCameraText: "相机",
+            attachDocumentText: "文件",
+            attachLocationText: "位置",
+            sendLocationText: "发送此位置",
+            shareLiveLocationText: "共享实时位置",
+            stopSharingLocationText: "停止共享",
+            liveLocationText: "实时位置",
+            liveLocationEndedText: "实时位置共享已结束",
+            liveLocationUpdatedJustNowText: "刚刚更新",
+            liveLocationUpdatedMinutesAgoFormat: "%d 分钟前更新",
+            openInMapsText: "在地图中打开"
         )
     }
 }

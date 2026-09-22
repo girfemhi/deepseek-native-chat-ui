@@ -40,7 +40,7 @@ public enum InputViewAction: Sendable {
     case cancelEdit
 }
 
-public enum InputViewState: Sendable {
+public enum InputViewState: Sendable, Equatable {
     case empty
     case hasTextOrMedia
 
@@ -61,7 +61,7 @@ public enum InputViewState: Sendable {
     }
 }
 
-public enum AvailableInputType: Sendable {
+public enum AvailableInputType: Sendable, CaseIterable {
     case text
     case media
     case giphy

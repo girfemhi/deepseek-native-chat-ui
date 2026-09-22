@@ -181,6 +181,12 @@ public struct ChatView<MessageContent: View, InputViewContent: View, MenuAction:
                     inputViewModel.text = newValue
                 }
             }
+            .onChange(of: inputViewCustomizationParameters.inputEnabled) { _, enabled in
+                inputViewModel.inputEnabled = enabled
+            }
+            .onChange(of: inputViewCustomizationParameters.sendDisabled) { _, disabled in
+                inputViewModel.sendDisabled = disabled
+            }
             .onChange(of: selectedGiphyMedia) {
                 if let giphyMedia = selectedGiphyMedia {
                     inputViewModel.attachments.giphyMedia = giphyMedia
@@ -245,7 +251,12 @@ public struct ChatView<MessageContent: View, InputViewContent: View, MenuAction:
                 }
             }
             .fullScreenCover(isPresented: $viewModel.fullscreenAttachmentPresented) {
-                let attachments = sections.flatMap { section in section.rows.flatMap { $0.message.attachments } }
+                let sourceAttachments = sections.flatMap { section in section.rows.flatMap { $0.message.attachments } }
+                let attachments = sourceAttachments.map { attachment in
+                    attachment.id == viewModel.fullscreenAttachmentItem?.id
+                        ? (viewModel.fullscreenAttachmentItem ?? attachment)
+                        : attachment
+                }
                 let index = attachments.firstIndex { $0.id == viewModel.fullscreenAttachmentItem?.id }
 
                 FullscreenMediaPages(
@@ -404,6 +415,7 @@ public struct ChatView<MessageContent: View, InputViewContent: View, MenuAction:
                 viewModel.didUpdateAttachmentStatus = didUpdateAttachmentStatus
             }
             viewModel.liveLocationBroadcaster.onEvent = chatCustomizationParameters.onLiveLocationBroadcast
+            viewModel.attachmentTapHandler = chatCustomizationParameters.attachmentTapHandler
 
             inputViewModel.didSendMessage = { value in
                 Task { @MainActor in
@@ -418,37 +430,56 @@ public struct ChatView<MessageContent: View, InputViewContent: View, MenuAction:
                     }
                 }
             }
+            inputViewModel.didCommitMessage = { value in
+                if let id = value.id, let liveLocation = value.liveLocation {
+                    viewModel.startLiveLocationSharing(messageId: id, liveLocation: liveLocation)
+                }
+                if type == .conversation {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        self.pendingScrollTo = ScrollToParams(.newestMessage)
+                    }
+                }
+            }
+            inputViewModel.inputEnabled = inputViewCustomizationParameters.inputEnabled
+            inputViewModel.sendDisabled = inputViewCustomizationParameters.sendDisabled
+            inputViewModel.sendCommitMode = inputViewCustomizationParameters.sendCommitMode
         }
     }
 
     var inputView: some View {
-        ZStack {
-            let customInputView = inputViewBuilder(
-                InputViewBuilderParameters(
-                    text: $inputViewModel.text,
-                    attachments: inputViewModel.attachments,
-                    inputViewState: inputViewModel.state,
-                    inputViewStyle: .message,
-                    inputViewActionClosure: inputViewModel.inputViewAction()
-                ) {
-                    globalFocusState.focus = nil
-                }
-            )
+        VStack(spacing: 0) {
+            if let accessory = inputViewCustomizationParameters.agentInputAccessory {
+                accessory()
+            }
 
-            if customInputView is DummyView {
-                InputView(
-                    viewModel: inputViewModel,
-                    inputFieldId: viewModel.inputFieldId,
-                    style: .message,
-                    availableInputs: inputViewCustomizationParameters.availableInputs,
-                    recorderSettings: inputViewCustomizationParameters.recorderSettings,
-                    audioRecordingMode: inputViewCustomizationParameters.audioRecordingMode,
-                    photoPickerBackend: inputViewCustomizationParameters.photoPickerBackend,
-                    localization: chatCustomizationParameters.localization
+            ZStack {
+                let customInputView = inputViewBuilder(
+                    InputViewBuilderParameters(
+                        text: $inputViewModel.text,
+                        attachments: inputViewModel.attachments,
+                        inputViewState: inputViewModel.state,
+                        inputViewStyle: .message,
+                        inputViewActionClosure: inputViewModel.inputViewAction()
+                    ) {
+                        globalFocusState.focus = nil
+                    }
                 )
-            } else {
-                customInputView
-                    .customFocus($globalFocusState.focus, equals: .uuid(viewModel.inputFieldId))
+
+                if customInputView is DummyView {
+                    InputView(
+                        viewModel: inputViewModel,
+                        inputFieldId: viewModel.inputFieldId,
+                        style: .message,
+                        availableInputs: inputViewCustomizationParameters.availableInputs,
+                        recorderSettings: inputViewCustomizationParameters.recorderSettings,
+                        audioRecordingMode: inputViewCustomizationParameters.audioRecordingMode,
+                        photoPickerBackend: inputViewCustomizationParameters.photoPickerBackend,
+                        localization: chatCustomizationParameters.localization
+                    )
+                } else {
+                    customInputView
+                        .customFocus($globalFocusState.focus, equals: .uuid(viewModel.inputFieldId))
+                }
             }
         }
         .environmentObject(globalFocusState)

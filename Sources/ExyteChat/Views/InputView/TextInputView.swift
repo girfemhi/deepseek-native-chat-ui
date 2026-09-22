@@ -21,6 +21,8 @@ struct TextInputView: View {
             .foregroundColor(style == .message ? theme.colors.inputPlaceholderText : theme.colors.inputSignaturePlaceholderText), axis: .vertical)
             .customFocus($globalFocusState.focus, equals: .uuid(inputFieldId))
             .foregroundColor(style == .message ? theme.colors.inputText : theme.colors.inputSignatureText)
+            .lineLimit(1...6)
+            .frame(minHeight: 44)
             .padding(.vertical, 10)
             .padding(.leading, !isAttachmentsAvailable() ? 12 : 0)
             .simultaneousGesture(
@@ -35,4 +37,3 @@ struct TextInputView: View {
         return attachmentTypes.contains { availableInputs.contains($0) }
     }
 }
-

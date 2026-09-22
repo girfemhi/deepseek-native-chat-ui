@@ -35,6 +35,7 @@ final class ChatViewModel: ObservableObject {
     var didUpdateAttachmentStatus: (AttachmentUploadUpdate) -> Void = { _ in }
     var inputViewModel: InputViewModel?
     var globalFocusState: GlobalFocusState?
+    var attachmentTapHandler: ((Attachment, @escaping (Attachment) -> Void) -> Void)?
 
     let liveLocationBroadcaster = LiveLocationBroadcaster()
     private var liveLocationCancellable: AnyCancellable?
@@ -57,6 +58,18 @@ final class ChatViewModel: ObservableObject {
     func presentAttachmentFullScreen(_ attachment: Attachment) {
         fullscreenAttachmentItem = attachment
         fullscreenAttachmentPresented = true
+    }
+
+    func handleAttachmentTap(_ attachment: Attachment) {
+        guard let attachmentTapHandler else {
+            presentAttachmentFullScreen(attachment)
+            return
+        }
+        attachmentTapHandler(attachment) { [weak self] resolvedAttachment in
+            Task { @MainActor [weak self] in
+                self?.presentAttachmentFullScreen(resolvedAttachment)
+            }
+        }
     }
     
     func dismissAttachmentFullScreen() {

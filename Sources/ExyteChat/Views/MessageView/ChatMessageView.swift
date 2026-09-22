@@ -33,7 +33,7 @@ struct ChatMessageView<MessageContent: View>: View {
                     showContextMenuClosure: { viewModel.messageMenuRow = row },
                     messageActionClosure: viewModel.messageMenuAction(),
                     showAttachmentClosure: { attachment in
-                        self.viewModel.presentAttachmentFullScreen(attachment)
+                        self.viewModel.handleAttachmentTap(attachment)
                     }
                 )
             )

@@ -21,10 +21,11 @@ extension InputView {
             Group {
                 if state.canSend || !isAudioAvailable() {
                     sendButton
-                        .disabled(!state.canSend)
+                        .disabled(!state.canSend || viewModel.sendDisabled || viewModel.isCommitting)
                 } else {
                     recordButton
                         .highPriorityGesture(dragGesture())
+                        .allowsHitTesting(viewModel.inputEnabled && !viewModel.isCommitting)
                 }
             }
             .compositingGroup()
@@ -55,12 +56,13 @@ extension InputView {
                 stopRecordButton
             } else if state.canSend || !isAudioAvailable() {
                 sendButton
-                    .disabled(!state.canSend)
+                    .disabled(!state.canSend || viewModel.sendDisabled || viewModel.isCommitting)
             } else {
                 recordButton
                     .onTapGesture {
                         onAction(.recordAudioTap)
                     }
+                    .allowsHitTesting(viewModel.inputEnabled && !viewModel.isCommitting)
             }
         }
         .viewSize(48)

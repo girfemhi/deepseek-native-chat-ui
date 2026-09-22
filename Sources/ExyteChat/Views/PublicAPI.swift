@@ -46,6 +46,26 @@ public extension ChatView {
         return view
     }
 
+    /// Adds agent controls above the built-in composer while retaining all of
+    /// ExyteChat's media, camera, document, audio and reply affordances.
+    func agentInputAccessory<V: View>(@ViewBuilder _ builder: @escaping () -> V) -> ChatView {
+        var view = self
+        view.inputViewCustomizationParameters.agentInputAccessory = {
+            AnyView(builder())
+        }
+        return view
+    }
+
+    /// Intercepts attachment taps so authenticated hosts can resolve a private
+    /// URL before optionally continuing into ExyteChat's fullscreen viewer.
+    func attachmentTapHandler(
+        _ handler: @escaping (Attachment, @escaping (Attachment) -> Void) -> Void
+    ) -> ChatView {
+        var view = self
+        view.chatCustomizationParameters.attachmentTapHandler = handler
+        return view
+    }
+
     // MARK: - Customizations
 
     func isListAboveInputView(_ isAbove: Bool) -> ChatView {
@@ -338,6 +358,27 @@ public extension ChatView {
         var view = self
         view.inputViewCustomizationParameters.externalInputText = binding.wrappedValue
         view.inputViewCustomizationParameters.onInputTextChange = { binding.wrappedValue = $0 }
+        return view
+    }
+
+    /// Enables or disables all composer interaction while retaining the draft.
+    func inputEnabled(_ enabled: Bool) -> ChatView {
+        var view = self
+        view.inputViewCustomizationParameters.inputEnabled = enabled
+        return view
+    }
+
+    /// Disables submission without disabling text editing or attachment selection.
+    func sendDisabled(_ disabled: Bool) -> ChatView {
+        var view = self
+        view.inputViewCustomizationParameters.sendDisabled = disabled
+        return view
+    }
+
+    /// Chooses immediate clearing or async acknowledgement before clearing a draft.
+    func sendCommitMode(_ mode: SendCommitMode) -> ChatView {
+        var view = self
+        view.inputViewCustomizationParameters.sendCommitMode = mode
         return view
     }
 

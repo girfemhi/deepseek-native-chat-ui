@@ -274,7 +274,7 @@ struct MessageView: View {
                 )
                 viewModel.updateAttachmentStatus(update)
             } else {
-                viewModel.presentAttachmentFullScreen(attachment)
+                viewModel.handleAttachmentTap(attachment)
             }
         }
         .applyIf(message.attachments.count > 1) {
