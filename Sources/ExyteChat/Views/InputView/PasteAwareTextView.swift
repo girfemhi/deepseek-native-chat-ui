@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 struct PasteAwareTextView: UIViewRepresentable {
     @Binding var text: String
@@ -22,6 +23,9 @@ struct PasteAwareTextView: UIViewRepresentable {
         view.textContainerInset = .zero
         view.textContainer.lineFragmentPadding = 0
         view.returnKeyType = .default
+        view.pasteConfiguration = UIPasteConfiguration(
+            acceptableTypeIdentifiers: [UTType.item.identifier]
+        )
         view.onPasteProviders = { providers, insertText in
             context.coordinator.parent.onPasteProviders(providers, insertText)
         }
@@ -95,5 +99,13 @@ final class AttachmentPasteTextView: UITextView {
             insertText(text)
             delegate?.textViewDidChange?(self)
         }
+    }
+
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(paste(_:)),
+           PastedContentImporter.containsAttachment(UIPasteboard.general.itemProviders) {
+            return true
+        }
+        return super.canPerformAction(action, withSender: sender)
     }
 }

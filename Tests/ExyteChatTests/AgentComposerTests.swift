@@ -676,6 +676,33 @@ final class AgentComposerTests: XCTestCase {
         XCTAssertTrue(payload.ownedURLs.allSatisfy(PastedContentImporter.isOwned))
     }
 
+    func testPastedSVGStaysDocumentWhilePNGUsesMediaPipeline() async {
+        let svg = dataProvider(name: "vector.svg", type: .svg, data: Data("<svg/>".utf8))
+        let png = dataProvider(name: "bitmap.png", type: .png, data: Data([0x89, 0x50, 0x4E, 0x47]))
+        let payload = await PastedContentImporter.importProviders([
+            SendableItemProvider(index: 0, provider: svg),
+            SendableItemProvider(index: 1, provider: png)
+        ])
+        defer { PastedContentImporter.deleteOwned(payload.ownedURLs) }
+
+        XCTAssertEqual(payload.documents.map { $0.0.fileName }, ["vector.svg"])
+        XCTAssertEqual(payload.documents.first?.0.contentTypeIdentifier, UTType.svg.identifier)
+        XCTAssertEqual(payload.medias.count, 1)
+    }
+
+    func testPastedGIFAndPDFStayOriginalDocuments() async {
+        let gif = dataProvider(name: "animated.gif", type: .gif, data: Data("GIF89a".utf8))
+        let pdf = dataProvider(name: "paper.pdf", type: .pdf, data: Data("%PDF".utf8))
+        let payload = await PastedContentImporter.importProviders([
+            SendableItemProvider(index: 0, provider: gif),
+            SendableItemProvider(index: 1, provider: pdf)
+        ])
+        defer { PastedContentImporter.deleteOwned(payload.ownedURLs) }
+
+        XCTAssertTrue(payload.medias.isEmpty)
+        XCTAssertEqual(payload.documents.map { $0.0.fileName }, ["animated.gif", "paper.pdf"])
+    }
+
     func testPasteImporterCopiesFileURLAndNeverDeletesOriginal() async throws {
         let original = FileManager.tempDirPath.appendingPathComponent("source-\(UUID().uuidString).docx")
         try Data("original".utf8).write(to: original)
@@ -692,6 +719,33 @@ final class AgentComposerTests: XCTestCase {
         XCTAssertNotEqual(payload.documents[0].0.url, original)
         XCTAssertTrue(PastedContentImporter.isOwned(payload.documents[0].0.url))
         XCTAssertTrue(FileManager.default.fileExists(atPath: original.path))
+    }
+
+    func testPasteMenuIsAvailableForPDFMetadata() throws {
+        let source = FileManager.tempDirPath.appendingPathComponent("paste-menu-\(UUID().uuidString).pdf")
+        try Data("%PDF".utf8).write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let oldProviders = UIPasteboard.general.itemProviders
+        defer { UIPasteboard.general.itemProviders = oldProviders }
+        UIPasteboard.general.itemProviders = [NSItemProvider(contentsOf: source)!]
+        let textView = AttachmentPasteTextView()
+
+        XCTAssertTrue(textView.canPerformAction(#selector(UIResponderStandardEditActions.paste(_:)), withSender: nil))
+    }
+
+    func testFileURLIsStagedBeforeProviderCompletionInvalidatesSource() async throws {
+        let source = FileManager.tempDirPath.appendingPathComponent("ephemeral-\(UUID().uuidString).pdf")
+        try Data("ephemeral".utf8).write(to: source)
+        let provider = EphemeralFileURLItemProvider(source: source)
+
+        let payload = await PastedContentImporter.importProviders([
+            SendableItemProvider(index: 0, provider: provider)
+        ])
+        defer { PastedContentImporter.deleteOwned(payload.ownedURLs) }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertEqual(payload.documents.count, 1)
+        XCTAssertEqual(try Data(contentsOf: payload.documents[0].0.url), Data("ephemeral".utf8))
     }
 
     func testPasteDetectionLeavesPlainTextAndLongWebURLToUIKitFallback() {
@@ -1219,5 +1273,31 @@ private actor SuspendedRecordingService: RecordingService {
     func stopRecording(token: UUID?) {
         guard token == nil || activeToken == token else { return }
         activeToken = nil
+    }
+}
+
+private final class EphemeralFileURLItemProvider: NSItemProvider {
+    private let source: URL
+
+    init(source: URL) {
+        self.source = source
+        super.init()
+    }
+
+    override var registeredTypeIdentifiers: [String] {
+        [UTType.fileURL.identifier]
+    }
+
+    override func hasItemConformingToTypeIdentifier(_ typeIdentifier: String) -> Bool {
+        typeIdentifier == UTType.fileURL.identifier
+    }
+
+    override func loadItem(
+        forTypeIdentifier typeIdentifier: String,
+        options: [AnyHashable: Any]? = nil,
+        completionHandler: NSItemProvider.CompletionHandler? = nil
+    ) {
+        completionHandler?(source as NSURL, nil)
+        try? FileManager.default.removeItem(at: source)
     }
 }

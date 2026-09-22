@@ -66,8 +66,7 @@ enum PastedContentImporter {
 
     private static func importProvider(_ item: SendableItemProvider) async -> ImportedPastePayload {
         if item.provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier),
-           let url = await loadFileURL(item), url.isFileURL,
-           let result = stageFile(at: url, provider: item.provider, type: UTType(filenameExtension: url.pathExtension)) {
+           let result = await loadAndStageFileURL(item) {
             return result
         }
 
@@ -106,13 +105,25 @@ enum PastedContentImporter {
         }
     }
 
-    private static func loadFileURL(_ item: SendableItemProvider) async -> URL? {
+    private static func loadAndStageFileURL(_ item: SendableItemProvider) async -> ImportedPastePayload? {
         await withCheckedContinuation { continuation in
             item.provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { value, _ in
-                if let url = value as? URL { continuation.resume(returning: url); return }
+                if let url = value as? URL, url.isFileURL {
+                    continuation.resume(returning: stageFile(
+                        at: url,
+                        provider: item.provider,
+                        type: UTType(filenameExtension: url.pathExtension)
+                    ))
+                    return
+                }
                 if let data = value as? Data,
-                   let url = URL(dataRepresentation: data, relativeTo: nil) {
-                    continuation.resume(returning: url)
+                   let url = URL(dataRepresentation: data, relativeTo: nil),
+                   url.isFileURL {
+                    continuation.resume(returning: stageFile(
+                        at: url,
+                        provider: item.provider,
+                        type: UTType(filenameExtension: url.pathExtension)
+                    ))
                     return
                 }
                 continuation.resume(returning: nil)
@@ -190,7 +201,7 @@ enum PastedContentImporter {
 
     private static func makePayload(url: URL, provider: NSItemProvider, type: UTType?) -> ImportedPastePayload? {
         let resolved = type ?? UTType(filenameExtension: url.pathExtension)
-        if resolved?.conforms(to: .image) == true || resolved?.conforms(to: .movie) == true {
+        if resolved?.conforms(to: .movie) == true || isSupportedBitmap(resolved, url: url) {
             let mediaType: MediaType = resolved?.conforms(to: .movie) == true ? .video : .image
             let media = Media(source: PastedMediaModel(url: url, mediaType: mediaType))
             return ImportedPastePayload(medias: [(media, url)])
@@ -203,6 +214,12 @@ enum PastedContentImporter {
             contentTypeIdentifier: resolved?.identifier
         )
         return ImportedPastePayload(documents: [(document, url)])
+    }
+
+    private static func isSupportedBitmap(_ type: UTType?, url: URL) -> Bool {
+        guard type?.conforms(to: .image) == true else { return false }
+        let ext = (type?.preferredFilenameExtension ?? url.pathExtension).lowercased()
+        return ["png", "jpg", "jpeg", "heic", "heif", "tif", "tiff", "bmp", "webp"].contains(ext)
     }
 }
 
