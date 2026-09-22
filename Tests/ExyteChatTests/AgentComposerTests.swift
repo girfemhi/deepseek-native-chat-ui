@@ -1,5 +1,6 @@
 import XCTest
 @testable import ExyteChat
+import ExyteMediaPicker
 
 @MainActor
 final class AgentComposerTests: XCTestCase {
@@ -106,6 +107,168 @@ final class AgentComposerTests: XCTestCase {
         XCTAssertTrue(model.fullscreenAttachmentPresented)
     }
 
+    func testInitialDraftRestoresAllComposerFieldsOnlyOnce() async {
+        let createdAt = Date(timeIntervalSince1970: 123_456)
+        let media = Media(source: TestMediaSource(url: URL(fileURLWithPath: "/tmp/photo.jpg")))
+        let document = DocumentItem(url: URL(fileURLWithPath: "/tmp/report.pdf"), fileName: "report.pdf")
+        let recording = Recording(duration: 3, waveformSamples: [0.1, 0.5], url: URL(fileURLWithPath: "/tmp/audio.m4a"))
+        let reply = ReplyMessage(
+            id: "reply-1",
+            user: User(id: "user-1", name: "User", avatarURL: nil, isCurrentUser: false),
+            createdAt: createdAt,
+            text: "quoted"
+        )
+        let draft = DraftMessage(
+            id: "draft-1",
+            text: "restored",
+            medias: [media],
+            giphyMedia: nil,
+            documents: [document],
+            staticLocation: StaticLocation(latitude: 1, longitude: 2),
+            liveLocation: LiveLocation(
+                latitude: 3,
+                longitude: 4,
+                startedAt: createdAt,
+                expiresAt: createdAt.addingTimeInterval(3_600)
+            ),
+            recording: recording,
+            replyMessage: reply,
+            createdAt: createdAt
+        )
+        let model = InputViewModel()
+        model.initialDraft = draft
+
+        model.onStart()
+
+        XCTAssertEqual(model.text, draft.text)
+        XCTAssertEqual(model.attachments.medias.map(\.id), draft.medias.map(\.id))
+        XCTAssertEqual(model.attachments.documents, draft.documents)
+        XCTAssertEqual(model.attachments.staticLocation, draft.staticLocation)
+        XCTAssertEqual(model.attachments.liveLocation, draft.liveLocation)
+        XCTAssertEqual(model.attachments.recording, draft.recording)
+        XCTAssertEqual(model.attachments.replyMessage, draft.replyMessage)
+        await Task.yield()
+        XCTAssertEqual(model.state, .hasRecording)
+
+        model.onStop()
+        model.initialDraft = DraftMessage(
+            text: "must not replace",
+            medias: [],
+            giphyMedia: nil,
+            recording: nil,
+            replyMessage: nil,
+            createdAt: Date()
+        )
+        model.onStart()
+        XCTAssertEqual(model.text, "restored")
+    }
+
+    func testDraftSnapshotRoundTripUsesStableIdentityAndEmitsEmpty() async {
+        let media = Media(source: TestMediaSource(url: URL(fileURLWithPath: "/tmp/photo.jpg")))
+        let document = DocumentItem(url: URL(fileURLWithPath: "/tmp/report.pdf"))
+        let model = InputViewModel()
+        var snapshots: [DraftMessage] = []
+        model.onDraftChange = { snapshots.append($0) }
+        model.onStart()
+
+        model.text = "work in progress"
+        model.attachments.medias = [media]
+        model.attachments.documents = [document]
+        model.attachments.recording = Recording(duration: 2, url: URL(fileURLWithPath: "/tmp/audio.m4a"))
+        model.attachments.staticLocation = StaticLocation(latitude: 10, longitude: 20)
+        try? await Task.sleep(for: .milliseconds(180))
+        XCTAssertFalse(snapshots.isEmpty)
+
+        let saved = snapshots.last!
+        XCTAssertNotNil(saved.id)
+        XCTAssertEqual(saved.text, model.text)
+        XCTAssertEqual(saved.medias.map(\.id), [media.id])
+        XCTAssertEqual(saved.documents, [document])
+        XCTAssertEqual(saved.recording, model.attachments.recording)
+        XCTAssertEqual(saved.staticLocation, model.attachments.staticLocation)
+
+        model.reset()
+        try? await Task.sleep(for: .milliseconds(180))
+        XCTAssertGreaterThanOrEqual(snapshots.count, 2)
+
+        let empty = snapshots.last!
+        XCTAssertEqual(empty.id, saved.id)
+        XCTAssertEqual(empty.createdAt, saved.createdAt)
+        XCTAssertEqual(empty.text, "")
+        XCTAssertTrue(empty.medias.isEmpty)
+        XCTAssertTrue(empty.documents.isEmpty)
+        XCTAssertNil(empty.recording)
+    }
+
+    func testDisablingInputClosesPickersAndPreservesDraft() async {
+        let document = DocumentItem(url: URL(fileURLWithPath: "/tmp/report.pdf"))
+        let model = InputViewModel()
+        model.text = "keep"
+        model.attachments.documents = [document]
+        model.attachments.recording = Recording(duration: 1)
+        model.state = .isRecordingTap
+        model.showMediaPicker = true
+        model.showGiphyPicker = true
+        model.showDocumentPicker = true
+        model.showLocationPicker = true
+
+        model.setInputEnabled(false)
+        await waitUntil { model.state != .isRecordingTap }
+
+        XCTAssertFalse(model.showMediaPicker)
+        XCTAssertFalse(model.showGiphyPicker)
+        XCTAssertFalse(model.showDocumentPicker)
+        XCTAssertFalse(model.showLocationPicker)
+        XCTAssertEqual(model.text, "keep")
+        XCTAssertEqual(model.attachments.documents, [document])
+        XCTAssertNotNil(model.attachments.recording)
+        XCTAssertEqual(model.state, .hasRecording)
+    }
+
+    func testDefaultMenuActionInitializerDoesNotRecurse() {
+        XCTAssertEqual(DefaultMessageMenuAction(), .copy)
+    }
+
+    func testDefaultAttachmentsProjectionRemovesOnlyTextAndReply() {
+        let createdAt = Date(timeIntervalSince1970: 42)
+        let attachment = Attachment(
+            id: "image-1",
+            url: URL(fileURLWithPath: "/tmp/image.jpg"),
+            type: .image
+        )
+        let reply = ReplyMessage(
+            id: "reply-1",
+            user: User(id: "user-2", name: "Other", avatarURL: nil, isCurrentUser: false),
+            createdAt: createdAt,
+            text: "reply"
+        )
+        let message = Message(
+            id: "message-1",
+            user: User(id: "user-1", name: "Agent", avatarURL: nil, isCurrentUser: false),
+            createdAt: createdAt,
+            text: "**Markdown**",
+            attachments: [attachment],
+            recording: Recording(duration: 1),
+            replyMessage: reply
+        )
+        let params = MessageBuilderParameters(
+            message: message,
+            positionInGroup: .single,
+            positionInMessagesSection: .single,
+            positionInCommentsGroup: nil,
+            showContextMenuClosure: {},
+            messageActionClosure: { _, _ in },
+            showAttachmentClosure: { _ in }
+        )
+
+        let projected = params.attachmentsOnlyMessage
+        XCTAssertFalse(projected.hasText)
+        XCTAssertNil(projected.replyMessage)
+        XCTAssertEqual(projected.attachments, message.attachments)
+        XCTAssertEqual(projected.recording, message.recording)
+        XCTAssertEqual(projected.id, message.id)
+    }
+
     private func waitUntil(
         _ predicate: @escaping @MainActor () -> Bool,
         iterations: Int = 200
@@ -115,6 +278,16 @@ final class AgentComposerTests: XCTestCase {
         }
         XCTAssertTrue(predicate())
     }
+}
+
+private struct TestMediaSource: MediaModelProtocol {
+    let url: URL
+    var mediaType: MediaType? { .image }
+    var duration: CGFloat? { get async { nil } }
+    func getURL() async -> URL? { url }
+    func getThumbnailURL() async -> URL? { url }
+    func getData() async throws -> Data? { nil }
+    func getThumbnailData() async -> Data? { nil }
 }
 
 @MainActor

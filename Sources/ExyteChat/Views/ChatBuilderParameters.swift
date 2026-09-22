@@ -27,6 +27,36 @@ public struct MessageBuilderParameters {
     @MainActor public func defaultMessageView() -> some View {
         DefaultMessageView(params: self)
     }
+
+    /// Reuses ExyteChat's built-in attachment, Giphy, location and recording
+    /// presentation while allowing a host to render message text itself.
+    @MainActor @ViewBuilder public func defaultAttachmentsView() -> some View {
+        let attachmentMessage = attachmentsOnlyMessage
+        if !attachmentMessage.attachments.isEmpty
+            || attachmentMessage.giphyMediaId != nil
+            || attachmentMessage.staticLocation != nil
+            || attachmentMessage.liveLocation != nil
+            || attachmentMessage.recording != nil {
+            DefaultMessageView(
+                params: MessageBuilderParameters(
+                    message: attachmentMessage,
+                    positionInGroup: positionInGroup,
+                    positionInMessagesSection: positionInMessagesSection,
+                    positionInCommentsGroup: positionInCommentsGroup,
+                    showContextMenuClosure: showContextMenuClosure,
+                    messageActionClosure: messageActionClosure,
+                    showAttachmentClosure: showAttachmentClosure
+                )
+            )
+        }
+    }
+
+    var attachmentsOnlyMessage: Message {
+        var copy = message
+        copy.attributedText = AttributedString()
+        copy.replyMessage = nil
+        return copy
+    }
 }
 
 /// To build a custom input view use the following parameters passed by builder closure:

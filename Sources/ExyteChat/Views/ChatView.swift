@@ -182,7 +182,7 @@ public struct ChatView<MessageContent: View, InputViewContent: View, MenuAction:
                 }
             }
             .onChange(of: inputViewCustomizationParameters.inputEnabled) { _, enabled in
-                inputViewModel.inputEnabled = enabled
+                inputViewModel.setInputEnabled(enabled)
             }
             .onChange(of: inputViewCustomizationParameters.sendDisabled) { _, disabled in
                 inputViewModel.sendDisabled = disabled
@@ -440,7 +440,7 @@ public struct ChatView<MessageContent: View, InputViewContent: View, MenuAction:
                     }
                 }
             }
-            inputViewModel.inputEnabled = inputViewCustomizationParameters.inputEnabled
+            inputViewModel.setInputEnabled(inputViewCustomizationParameters.inputEnabled)
             inputViewModel.sendDisabled = inputViewCustomizationParameters.sendDisabled
             inputViewModel.sendCommitMode = inputViewCustomizationParameters.sendCommitMode
         }
@@ -483,8 +483,14 @@ public struct ChatView<MessageContent: View, InputViewContent: View, MenuAction:
             }
         }
         .environmentObject(globalFocusState)
-        .onAppear(perform: inputViewModel.onStart)
-        .onDisappear(perform: inputViewModel.onStop)
+        .onAppear {
+            inputViewModel.initialDraft = inputViewCustomizationParameters.initialDraft
+            inputViewModel.onDraftChange = inputViewCustomizationParameters.onDraftChange
+            inputViewModel.onStart()
+        }
+        .onDisappear {
+            inputViewModel.onStop()
+        }
     }
     
     func messageMenu(_ row: MessageRow) -> some View {

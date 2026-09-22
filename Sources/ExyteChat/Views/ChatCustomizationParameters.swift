@@ -77,6 +77,8 @@ struct MessageCustomizationParameters {
 struct InputViewCustomizationParameters {
     var externalInputText: String? // External → Internal
     var onInputTextChange: ((String) -> Void)? // Internal → External
+    var initialDraft: DraftMessage?
+    var onDraftChange: ((DraftMessage) -> Void)?
     var agentInputAccessory: (() -> AnyView)?
     var inputEnabled = true
     var sendDisabled = false

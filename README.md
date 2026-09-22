@@ -142,6 +142,20 @@ Here `params` is a [`MessageBuilderParameters`](./Sources/ExyteChat/Views/ChatBu
 - `messageActionClosure ` - closure to pass user interaction, .reply for example   
 - `showAttachmentClosure` - you can pass an attachment to this closure to use ChatView's fullscreen media viewer    
 
+An agent client can render assistant text with its own Markdown view while
+retaining ExyteChat's attachment grid, recordings, Giphy and location UI:
+
+```swift
+VStack(alignment: .leading) {
+    RichMarkdown(message.text)
+    params.defaultAttachmentsView()
+}
+```
+
+`defaultAttachmentsView()` preserves the original message identity, status and
+callbacks, removes only its text and quoted reply, and returns no visible view
+when the message has no built-in attachment content.
+
 You may customize the input view (a text field with buttons at the bottom) like this: 
 ```swift
 ChatView(messages: viewModel.messages) { draft in
@@ -192,6 +206,10 @@ ChatView(messages: messages) { draft in
 .agentInputAccessory {
     AgentModelAndTaskStatusView()
 }
+.initialDraft(savedDraft)
+.onDraftChange { draft in
+    draftStore.saveOrDeleteWhenEmpty(draft)
+}
 .inputEnabled(isComposerAvailable)
 .sendDisabled(isTaskRunning)
 .sendCommitMode(.deferred { draft in
@@ -213,6 +231,18 @@ for retry with the same draft ID and creation date. Text typed while waiting for
 acknowledgement is preserved. An attachment handler may resolve private media to
 a local URL and call `openDefault`, or present documents itself without calling
 the default viewer.
+
+`initialDraft` is consumed only on the input model's first appearance. Give the
+`ChatView` a new SwiftUI identity when switching conversations. Draft changes
+are briefly debounced and flushed when the view disappears, so text, media,
+documents, recordings, replies and locations keep one stable ID and creation
+date. The final empty snapshot tells the host to delete only that conversation's
+saved draft.
+
+Setting `inputEnabled(false)` closes any open media, Giphy, document or location
+picker without resetting the draft. An active recording is stopped and retained,
+allowing the host to present an approval or question sheet without competing
+modal presentations.
 
 Use `.localization(.simplifiedChinese)` and `.chatTheme(.agentDefault)` for the
 included semantic Chinese/indigo agent appearance. Giphy still requires the

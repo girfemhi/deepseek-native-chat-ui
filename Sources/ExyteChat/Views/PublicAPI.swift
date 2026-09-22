@@ -361,6 +361,22 @@ public extension ChatView {
         return view
     }
 
+    /// Restores a composer draft exactly once when this ChatView's input model starts.
+    /// Use a new ChatView identity when switching conversations.
+    func initialDraft(_ draft: DraftMessage?) -> ChatView {
+        var view = self
+        view.inputViewCustomizationParameters.initialDraft = draft
+        return view
+    }
+
+    /// Publishes debounced, stable draft snapshots. An empty snapshot indicates
+    /// that the host should remove its persisted draft for this conversation.
+    func onDraftChange(_ handler: @escaping (DraftMessage) -> Void) -> ChatView {
+        var view = self
+        view.inputViewCustomizationParameters.onDraftChange = handler
+        return view
+    }
+
     /// Enables or disables all composer interaction while retaining the draft.
     func inputEnabled(_ enabled: Bool) -> ChatView {
         var view = self
