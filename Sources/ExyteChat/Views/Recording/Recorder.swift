@@ -61,7 +61,7 @@ final actor Recorder {
         guard let fileExt = fileExtension(for: recorderSettings.audioFormatID) else{
             return nil
         }
-        let recordingUrl = FileManager.tempDirPath.appendingPathComponent(UUID().uuidString + fileExt)
+        let recordingUrl = RecordingFileStore.makeURL(fileExtension: fileExt)
 
         do {
             try audioSession.setCategory(.playAndRecord, mode: .voiceChat)
@@ -124,6 +124,27 @@ final actor Recorder {
         default:
             return nil
         }
+    }
+}
+
+enum RecordingFileStore {
+    static let filenamePrefix = "DSH-exyte-recording-"
+
+    static func makeURL(fileExtension: String) -> URL {
+        FileManager.tempDirPath
+            .appendingPathComponent(filenamePrefix + UUID().uuidString + fileExtension)
+    }
+
+    static func isOwned(_ url: URL?) -> Bool {
+        guard let url else { return false }
+        let standardized = url.standardizedFileURL
+        return standardized.deletingLastPathComponent() == FileManager.tempDirPath.standardizedFileURL
+            && standardized.lastPathComponent.hasPrefix(filenamePrefix)
+    }
+
+    static func deleteIfOwned(_ url: URL?) {
+        guard isOwned(url), let url else { return }
+        try? FileManager.default.removeItem(at: url)
     }
 }
 

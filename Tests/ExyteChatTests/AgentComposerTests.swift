@@ -99,8 +99,78 @@ final class AgentComposerTests: XCTestCase {
 
         XCTAssertEqual(model.text, "next draft")
         XCTAssertEqual(snapshots.last?.text, "next draft")
-        XCTAssertEqual(snapshots.last?.id, gate.submittedDraft?.id)
-        XCTAssertEqual(snapshots.last?.createdAt, gate.submittedDraft?.createdAt)
+        XCTAssertNotEqual(snapshots.last?.id, gate.submittedDraft?.id)
+        XCTAssertNotEqual(snapshots.last?.createdAt, gate.submittedDraft?.createdAt)
+    }
+
+    func testSharedComposerStateRemountPreventsOldAcknowledgementOverwritingNewEdit() async {
+        let state = ChatComposerState()
+        let model = state.inputViewModel
+        let gate = CommitGate()
+        var snapshots: [DraftMessage] = []
+        model.onDraftChange = { snapshots.append($0) }
+        model.sendCommitMode = .deferred { draft in await gate.submit(draft) }
+        model.onStart()
+        model.text = "old submission"
+        model.state = .hasTextOrMedia
+
+        model.send()
+        await waitUntil { gate.hasSubmission }
+        model.onStop()
+        model.onStart()
+        model.text = "new edit"
+        gate.resolve(true)
+        await waitUntil { !model.isCommitting }
+
+        XCTAssertEqual(model.text, "new edit")
+        XCTAssertEqual(snapshots.last?.text, "new edit")
+        XCTAssertNotEqual(snapshots.last?.id, gate.submittedDraft?.id)
+    }
+
+    func testOldMountStoppingAfterNewMountKeepsNewDraftSubscriptionAndCallback() async {
+        let state = ChatComposerState()
+        let model = state.inputViewModel
+        let oldMount = UUID()
+        let newMount = UUID()
+        var oldSnapshots: [DraftMessage] = []
+        var newSnapshots: [DraftMessage] = []
+
+        model.onDraftChange = { oldSnapshots.append($0) }
+        model.onStart(mountID: oldMount)
+        model.text = "A"
+
+        model.onDraftChange = { newSnapshots.append($0) }
+        model.onStart(mountID: newMount)
+        model.onStop(mountID: oldMount)
+        model.text = "B"
+        try? await Task.sleep(for: .milliseconds(180))
+
+        XCTAssertEqual(oldSnapshots.count, 0)
+        XCTAssertEqual(newSnapshots.last?.text, "B")
+        model.onStop(mountID: newMount)
+    }
+
+    func testDeferredAcknowledgementDoesNotClearABAEdit() async {
+        let state = ChatComposerState()
+        let model = state.inputViewModel
+        let gate = CommitGate()
+        var snapshots: [DraftMessage] = []
+        model.onDraftChange = { snapshots.append($0) }
+        model.sendCommitMode = .deferred { draft in await gate.submit(draft) }
+        model.onStart()
+        model.text = "A"
+        model.state = .hasTextOrMedia
+
+        model.send()
+        await waitUntil { gate.hasSubmission }
+        model.text = "B"
+        model.text = "A"
+        gate.resolve(true)
+        await waitUntil { !model.isCommitting }
+
+        XCTAssertEqual(model.text, "A")
+        XCTAssertEqual(snapshots.last?.text, "A")
+        XCTAssertNotEqual(snapshots.last?.id, gate.submittedDraft?.id)
     }
 
     func testDisabledSendNeverSubmitsOrClears() async {
@@ -345,6 +415,73 @@ final class AgentComposerTests: XCTestCase {
             .resolvedColor(with: UITraitCollection(userInterfaceStyle: .dark))
         assertRGBA(light, 1, 1, 1, 1)
         assertRGBA(dark, 0, 0, 0, 1)
+    }
+
+    func testComposerDiscardCancelsLateAcknowledgementAndDeletesOnlyOwnedRecording() async throws {
+        let ownedURL = RecordingFileStore.makeURL(fileExtension: ".m4a")
+        let unrelatedURL = FileManager.tempDirPath.appendingPathComponent("unrelated-recording-\(UUID().uuidString).m4a")
+        try Data("owned".utf8).write(to: ownedURL)
+        try Data("unrelated".utf8).write(to: unrelatedURL)
+        defer { try? FileManager.default.removeItem(at: unrelatedURL) }
+
+        let state = ChatComposerState()
+        let model = state.inputViewModel
+        let gate = CommitGate()
+        var snapshots: [DraftMessage] = []
+        var committedCount = 0
+        model.onDraftChange = { snapshots.append($0) }
+        model.didCommitMessage = { _ in committedCount += 1 }
+        model.sendCommitMode = .deferred { draft in await gate.submit(draft) }
+        model.onStart()
+        model.attachments.recording = Recording(duration: 1, url: ownedURL)
+        model.state = .hasRecording
+
+        model.send()
+        await waitUntil { gate.hasSubmission }
+        state.discard()
+        await waitUntil { !FileManager.default.fileExists(atPath: ownedURL.path) }
+
+        XCTAssertFalse(model.isCommitting)
+        XCTAssertEqual(model.state, .empty)
+        XCTAssertEqual(snapshots.last?.text, "")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ownedURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: unrelatedURL.path))
+
+        gate.resolve(true)
+        await Task.yield()
+        XCTAssertEqual(committedCount, 0)
+        XCTAssertEqual(model.state, .empty)
+    }
+
+    func testSuccessfulDeferredAcknowledgementDeletesOwnedRecording() async throws {
+        let ownedURL = RecordingFileStore.makeURL(fileExtension: ".m4a")
+        try Data("audio".utf8).write(to: ownedURL)
+
+        let model = InputViewModel()
+        model.sendCommitMode = .deferred { _ in true }
+        model.attachments.recording = Recording(duration: 1, url: ownedURL)
+        model.state = .hasRecording
+
+        model.send()
+        await waitUntil { !model.isCommitting }
+        await waitUntil { !FileManager.default.fileExists(atPath: ownedURL.path) }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ownedURL.path))
+        XCTAssertNil(model.attachments.recording)
+    }
+
+    func testDeleteRecordingNeverDeletesUnownedURL() async throws {
+        let unrelatedURL = FileManager.tempDirPath.appendingPathComponent("user-provided-\(UUID().uuidString).m4a")
+        try Data("external".utf8).write(to: unrelatedURL)
+        defer { try? FileManager.default.removeItem(at: unrelatedURL) }
+
+        let model = InputViewModel()
+        model.attachments.recording = Recording(duration: 1, url: unrelatedURL)
+        model.state = .hasRecording
+        model.inputViewAction()(.deleteRecord)
+        await waitUntil { model.attachments.recording == nil }
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: unrelatedURL.path))
     }
 
     private func assertRGBA(

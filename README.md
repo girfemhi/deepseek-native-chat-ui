@@ -244,6 +244,25 @@ picker without resetting the draft. An active recording is stopped and retained,
 allowing the host to present an approval or question sheet without competing
 modal presentations.
 
+For views that may be remounted while a submission is awaiting acknowledgement,
+cache one `ChatComposerState` per account/conversation scope and pass it to the
+initializer:
+
+```swift
+ChatView(
+    messages: messages,
+    didSendMessage: legacySend,
+    composerState: composerStateForThisConversation
+)
+```
+
+This gives every remount the same input model, preventing an older submit task
+from overwriting newer edits. Call `composerState.discard()` on logout or when
+the scope is intentionally destroyed. Discard cancels the SDK task, stops audio,
+clears in-memory draft state and deletes only temporary recordings whose names
+start with `DSH-exyte-recording-`; selected documents and Photos originals are
+never deleted by the library.
+
 Use `.localization(.simplifiedChinese)` and `.chatTheme(.agentDefault)` for the
 included semantic Chinese/indigo agent appearance. Giphy still requires the
 host application to supply its own API key. To enable every built-in input,

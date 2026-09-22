@@ -10,8 +10,12 @@ import SwiftUI
 @MainActor
 final class InputViewModel: ObservableObject {
 
-    @Published var text = ""
-    @Published var attachments = InputViewAttachments()
+    @Published var text = "" {
+        didSet { textRevision += 1 }
+    }
+    @Published var attachments = InputViewAttachments() {
+        didSet { attachmentRevision += 1 }
+    }
     @Published var state: InputViewState = .empty
 
     @Published var showGiphyPicker = false
@@ -46,8 +50,13 @@ final class InputViewModel: ObservableObject {
     private var draftID: String?
     private var draftCreatedAt: Date?
     private var draftRevision = 0
+    private var textRevision = 0
     private var lastPublishedDraftRevision = 0
     private var draftChangeTask: Task<Void, Never>?
+    private var submissionTask: Task<Void, Never>?
+    private var submissionEpoch = 0
+    private let legacyMountID = UUID()
+    private var activeMountIDs: Set<UUID> = []
 
     private var recordPlayerSubscription: AnyCancellable?
     private var subscriptions = Set<AnyCancellable>()
@@ -59,6 +68,11 @@ final class InputViewModel: ObservableObject {
     }
 
     func onStart() {
+        onStart(mountID: legacyMountID)
+    }
+
+    func onStart(mountID: UUID) {
+        guard activeMountIDs.insert(mountID).inserted else { return }
         guard subscriptions.isEmpty else { return }
         isRestoringInitialDraft = true
         subscribeValidation()
@@ -69,7 +83,13 @@ final class InputViewModel: ObservableObject {
     }
 
     func onStop() {
+        onStop(mountID: legacyMountID)
+    }
+
+    func onStop(mountID: UUID) {
+        guard activeMountIDs.remove(mountID) != nil else { return }
         flushDraftChange()
+        guard activeMountIDs.isEmpty else { return }
         draftChangeTask?.cancel()
         draftChangeTask = nil
         subscriptions.removeAll()
@@ -93,6 +113,34 @@ final class InputViewModel: ObservableObject {
         }
     }
 
+    func discard() {
+        let ownedRecordingURLs = Set([
+            attachments.recording?.url,
+            pendingDraft?.recording?.url
+        ].compactMap { $0 }.filter(RecordingFileStore.isOwned))
+
+        submissionEpoch += 1
+        submissionTask?.cancel()
+        submissionTask = nil
+        draftChangeTask?.cancel()
+        draftChangeTask = nil
+        unsubscribeRecordPlayer()
+        isCommitting = false
+        showActivityIndicator = false
+
+        reset()
+        flushDraftChange(force: true)
+        draftID = nil
+        draftCreatedAt = nil
+        lastPublishedDraftRevision = draftRevision
+
+        Task {
+            await recorder.stopRecording()
+            await recordingPlayer?.reset()
+            ownedRecordingURLs.forEach(RecordingFileStore.deleteIfOwned)
+        }
+    }
+
     func reset() {
         text = ""
         attachments = InputViewAttachments()
@@ -110,10 +158,14 @@ final class InputViewModel: ObservableObject {
     func send() {
         guard inputEnabled, !sendDisabled, !isCommitting, canSubmitDraft else { return }
         isCommitting = true
-        Task {
+        submissionEpoch += 1
+        let epoch = submissionEpoch
+        submissionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
             await recorder.stopRecording()
             await recordingPlayer?.reset()
-            await sendMessage()
+            guard epoch == submissionEpoch, !Task.isCancelled else { return }
+            await sendMessage(epoch: epoch)
         }
     }
 
@@ -174,10 +226,12 @@ final class InputViewModel: ObservableObject {
                 await recordingPlayer?.reset()
             }
         case .deleteRecord:
+            let recordingURL = attachments.recording?.url
             Task {
                 unsubscribeRecordPlayer()
                 await recorder.stopRecording()
                 attachments.recording = nil
+                RecordingFileStore.deleteIfOwned(recordingURL)
             }
         case .playRecord:
             state = .playingRecording
@@ -244,7 +298,6 @@ private extension InputViewModel {
 
     func subscribeValidation() {
         $attachments.sink { [weak self] _ in
-            self?.attachmentRevision += 1
             self?.draftRevision += 1
             self?.validateDraft()
             self?.scheduleDraftChange()
@@ -393,7 +446,7 @@ private extension InputViewModel {
         )
     }
 
-    func sendMessage() async {
+    func sendMessage(epoch: Int) async {
         showActivityIndicator = true
         let isDeferred: Bool
         switch sendCommitMode {
@@ -404,27 +457,46 @@ private extension InputViewModel {
             && pendingAttachmentRevision == attachmentRevision
         let draft = canReusePendingDraft ? (pendingDraft ?? makeDraft(deferred: isDeferred)) : makeDraft(deferred: isDeferred)
         let submittedAttachmentRevision = attachmentRevision
+        let submittedTextRevision = textRevision
 
         switch sendCommitMode {
         case .immediate:
             didSendMessage?(draft)
+            guard epoch == submissionEpoch, !Task.isCancelled else { return }
             showActivityIndicator = false
             reset()
             isCommitting = false
+            submissionTask = nil
 
         case .deferred(let commit):
             let acknowledged = await commit(draft)
+            guard epoch == submissionEpoch, !Task.isCancelled else { return }
             if acknowledged {
-                if text == draft.text {
+                let textUnchanged = textRevision == submittedTextRevision
+                let attachmentsUnchanged = attachmentRevision == submittedAttachmentRevision
+                let submittedRecordingURL = draft.recording?.url
+                let submittedRecordingStillCurrent = submittedRecordingURL != nil
+                    && attachments.recording?.url == submittedRecordingURL
+
+                if textUnchanged {
                     text = ""
                 }
-                if attachmentRevision == submittedAttachmentRevision {
+                if attachmentsUnchanged {
                     attachments = InputViewAttachments()
+                } else if submittedRecordingStillCurrent {
+                    attachments.recording = nil
+                }
+                if submittedRecordingStillCurrent {
+                    RecordingFileStore.deleteIfOwned(submittedRecordingURL)
                 }
                 state = hasDraftContent ? .hasTextOrMedia : .empty
                 pendingDraft = nil
                 pendingDraftText = nil
                 pendingAttachmentRevision = nil
+                if hasDraftContent, !textUnchanged || !attachmentsUnchanged {
+                    draftID = nil
+                    draftCreatedAt = nil
+                }
                 // A view may disappear while the host is awaiting ACK. Its
                 // Combine subscriptions are then gone, so publish the final
                 // state explicitly rather than relying on @Published sinks.
@@ -437,6 +509,7 @@ private extension InputViewModel {
             }
             showActivityIndicator = false
             isCommitting = false
+            submissionTask = nil
         }
     }
 

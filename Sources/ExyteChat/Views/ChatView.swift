@@ -86,10 +86,11 @@ public struct ChatView<MessageContent: View, InputViewContent: View, MenuAction:
     // MARK: - State
 
     @StateObject private var viewModel = ChatViewModel()
-    @StateObject private var inputViewModel = InputViewModel()
+    @StateObject private var inputViewModel: InputViewModel
     @StateObject private var globalFocusState = GlobalFocusState()
     @StateObject private var networkMonitor = NetworkMonitor()
     @StateObject private var keyboardState = KeyboardState()
+    @State private var inputMountID = UUID()
 
     @State private var pendingScrollTo: ScrollToParams?
     @State private var isScrolledToBottom: Bool = true
@@ -486,10 +487,10 @@ public struct ChatView<MessageContent: View, InputViewContent: View, MenuAction:
         .onAppear {
             inputViewModel.initialDraft = inputViewCustomizationParameters.initialDraft
             inputViewModel.onDraftChange = inputViewCustomizationParameters.onDraftChange
-            inputViewModel.onStart()
+            inputViewModel.onStart(mountID: inputMountID)
         }
         .onDisappear {
-            inputViewModel.onStop()
+            inputViewModel.onStop(mountID: inputMountID)
         }
     }
     
@@ -686,7 +687,8 @@ extension ChatView {
         ) -> Void = { (selectedMenuAction: DefaultMessageMenuAction, defaultActionClosure, message) in
             defaultActionClosure(message, selectedMenuAction)
         },
-        didUpdateAttachmentStatus: ((AttachmentUploadUpdate) -> Void)? = nil
+        didUpdateAttachmentStatus: ((AttachmentUploadUpdate) -> Void)? = nil,
+        composerState: ChatComposerState? = nil
     ) {
         self.type = chatType
         self.sections = ChatView.mapMessages(messages, chatType: chatType, replyMode: replyMode)
@@ -696,5 +698,8 @@ extension ChatView {
         self.inputViewBuilder = inputViewBuilder
         self.messageMenuAction = messageMenuAction
         self.didUpdateAttachmentStatus = didUpdateAttachmentStatus
+        self._inputViewModel = StateObject(
+            wrappedValue: composerState?.inputViewModel ?? InputViewModel()
+        )
     }
 }
