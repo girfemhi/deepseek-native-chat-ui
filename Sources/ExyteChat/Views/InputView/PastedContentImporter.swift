@@ -1,0 +1,223 @@
+import Foundation
+import UniformTypeIdentifiers
+@preconcurrency import UIKit
+@preconcurrency import ExyteMediaPicker
+
+struct ImportedPastePayload: Sendable {
+    var medias: [(Media, URL)] = []
+    var documents: [(DocumentItem, URL)] = []
+    var textFragments: [String] = []
+
+    var ownedURLs: [URL] {
+        medias.map(\.1) + documents.map(\.1)
+    }
+}
+
+struct SendableItemProvider: @unchecked Sendable {
+    let index: Int
+    let provider: NSItemProvider
+}
+
+enum PastedContentImporter {
+    static let filenamePrefix = "DSH-exyte-paste-"
+    static let maximumItemBytes: Int64 = 1_024 * 1_024 * 1_024
+    private static let freeSpaceReserve: Int64 = 32 * 1_024 * 1_024
+
+    static func containsAttachment(_ providers: [NSItemProvider]) -> Bool {
+        providers.contains { provider in
+            provider.registeredTypeIdentifiers.contains { identifier in
+                guard let type = UTType(identifier) else { return false }
+                return type == .fileURL
+                    || type.conforms(to: .image)
+                    || type.conforms(to: .movie)
+                    || (type.conforms(to: .data)
+                        && !type.conforms(to: .text)
+                        && !type.conforms(to: .url))
+            }
+        }
+    }
+
+    static func importProviders(_ wrapped: [SendableItemProvider]) async -> ImportedPastePayload {
+        var ordered: [(Int, ImportedPastePayload)] = []
+        await withTaskGroup(of: (Int, ImportedPastePayload).self) { group in
+            for item in wrapped {
+                group.addTask { (item.index, await importProvider(item)) }
+            }
+            for await result in group { ordered.append(result) }
+        }
+        return ordered.sorted { $0.0 < $1.0 }.reduce(into: ImportedPastePayload()) { result, value in
+            result.medias.append(contentsOf: value.1.medias)
+            result.documents.append(contentsOf: value.1.documents)
+            result.textFragments.append(contentsOf: value.1.textFragments)
+        }
+    }
+
+    static func deleteOwned(_ urls: some Sequence<URL>) {
+        for url in urls where isOwned(url) {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    static func isOwned(_ url: URL) -> Bool {
+        let standardized = url.standardizedFileURL
+        return standardized.deletingLastPathComponent() == FileManager.tempDirPath.standardizedFileURL
+            && standardized.lastPathComponent.hasPrefix(filenamePrefix)
+    }
+
+    private static func importProvider(_ item: SendableItemProvider) async -> ImportedPastePayload {
+        if item.provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier),
+           let url = await loadFileURL(item), url.isFileURL,
+           let result = stageFile(at: url, provider: item.provider, type: UTType(filenameExtension: url.pathExtension)) {
+            return result
+        }
+
+        let types = item.provider.registeredTypeIdentifiers.compactMap(UTType.init)
+        let attachmentType = types.first { $0.conforms(to: .image) || $0.conforms(to: .movie) }
+            ?? types.first {
+                $0 != .fileURL
+                    && $0.conforms(to: .data)
+                    && !$0.conforms(to: .text)
+                    && !$0.conforms(to: .url)
+            }
+        if let attachmentType,
+           let staged = await loadAndStage(item, type: attachmentType),
+           let result = makePayload(url: staged, provider: item.provider, type: attachmentType) {
+            return result
+        }
+
+        if let text = await loadText(item), !text.isEmpty {
+            return ImportedPastePayload(textFragments: [text])
+        }
+        return ImportedPastePayload()
+    }
+
+    private static func loadAndStage(_ item: SendableItemProvider, type: UTType) async -> URL? {
+        await withCheckedContinuation { continuation in
+            item.provider.loadFileRepresentation(forTypeIdentifier: type.identifier) { url, _ in
+                guard let url else {
+                    item.provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { data, _ in
+                        guard let data else { continuation.resume(returning: nil); return }
+                        continuation.resume(returning: stage(data: data, provider: item.provider, type: type))
+                    }
+                    return
+                }
+                continuation.resume(returning: copyToOwnedStage(url, provider: item.provider, type: type))
+            }
+        }
+    }
+
+    private static func loadFileURL(_ item: SendableItemProvider) async -> URL? {
+        await withCheckedContinuation { continuation in
+            item.provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { value, _ in
+                if let url = value as? URL { continuation.resume(returning: url); return }
+                if let data = value as? Data,
+                   let url = URL(dataRepresentation: data, relativeTo: nil) {
+                    continuation.resume(returning: url)
+                    return
+                }
+                continuation.resume(returning: nil)
+            }
+        }
+    }
+
+    private static func loadText(_ item: SendableItemProvider) async -> String? {
+        guard item.provider.canLoadObject(ofClass: NSString.self) else { return nil }
+        return await withCheckedContinuation { continuation in
+            item.provider.loadObject(ofClass: NSString.self) { object, _ in
+                continuation.resume(returning: (object as? NSString).map(String.init))
+            }
+        }
+    }
+
+    private static func stageFile(at url: URL, provider: NSItemProvider, type: UTType?) -> ImportedPastePayload? {
+        guard url.isFileURL,
+              let staged = copyToOwnedStage(url, provider: provider, type: type) else { return nil }
+        return makePayload(url: staged, provider: provider, type: type)
+    }
+
+    private static func copyToOwnedStage(_ source: URL, provider: NSItemProvider, type: UTType?) -> URL? {
+        guard source.isFileURL,
+              let values = try? source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
+              values.isRegularFile == true,
+              values.isSymbolicLink != true else { return nil }
+        let fileSize = Int64(values.fileSize ?? 0)
+        guard fileSize >= 0, fileSize <= maximumItemBytes, hasCapacity(for: fileSize) else { return nil }
+        let destination = destinationURL(provider: provider, type: type, sourceExtension: source.pathExtension)
+        do {
+            try FileManager.default.copyItem(at: source, to: destination)
+            guard let stagedValues = try? destination.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+                  stagedValues.isRegularFile == true,
+                  stagedValues.isSymbolicLink != true else {
+                try? FileManager.default.removeItem(at: destination)
+                return nil
+            }
+            return destination
+        } catch {
+            try? FileManager.default.removeItem(at: destination)
+            return nil
+        }
+    }
+
+    private static func stage(data: Data, provider: NSItemProvider, type: UTType) -> URL? {
+        guard Int64(data.count) <= maximumItemBytes, hasCapacity(for: Int64(data.count)) else { return nil }
+        let destination = destinationURL(provider: provider, type: type, sourceExtension: nil)
+        do {
+            try data.write(to: destination, options: .atomic)
+            return destination
+        } catch {
+            try? FileManager.default.removeItem(at: destination)
+            return nil
+        }
+    }
+
+    private static func hasCapacity(for bytes: Int64) -> Bool {
+        let values = try? FileManager.tempDirPath.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        guard let capacity = values?.volumeAvailableCapacityForImportantUsage else { return true }
+        return capacity >= bytes + freeSpaceReserve
+    }
+
+    private static func destinationURL(provider: NSItemProvider, type: UTType?, sourceExtension: String?) -> URL {
+        let suggested = provider.suggestedName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = suggested?.isEmpty == false ? suggested! : "Pasted attachment"
+        let sanitized = base.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        var destination = FileManager.tempDirPath.appendingPathComponent(filenamePrefix + UUID().uuidString + "-" + sanitized)
+        if destination.pathExtension.isEmpty,
+           let ext = sourceExtension?.isEmpty == false ? sourceExtension : type?.preferredFilenameExtension {
+            destination.appendPathExtension(ext)
+        }
+        return destination
+    }
+
+    private static func makePayload(url: URL, provider: NSItemProvider, type: UTType?) -> ImportedPastePayload? {
+        let resolved = type ?? UTType(filenameExtension: url.pathExtension)
+        if resolved?.conforms(to: .image) == true || resolved?.conforms(to: .movie) == true {
+            let mediaType: MediaType = resolved?.conforms(to: .movie) == true ? .video : .image
+            let media = Media(source: PastedMediaModel(url: url, mediaType: mediaType))
+            return ImportedPastePayload(medias: [(media, url)])
+        }
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue
+        let document = DocumentItem(
+            url: url,
+            fileName: provider.suggestedName ?? url.lastPathComponent,
+            fileSize: size,
+            contentTypeIdentifier: resolved?.identifier
+        )
+        return ImportedPastePayload(documents: [(document, url)])
+    }
+}
+
+actor PastedMediaModel: MediaModelProtocol {
+    nonisolated let url: URL
+    nonisolated let mediaType: MediaType?
+
+    init(url: URL, mediaType: MediaType) {
+        self.url = url
+        self.mediaType = mediaType
+    }
+
+    var duration: CGFloat? { nil }
+    func getURL() async -> URL? { url }
+    func getThumbnailURL() async -> URL? { url }
+    func getData() async throws -> Data? { try Data(contentsOf: url) }
+    func getThumbnailData() async -> Data? { try? Data(contentsOf: url) }
+}

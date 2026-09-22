@@ -26,8 +26,9 @@ public final class ChatComposerState {
         self.inputViewModel = inputViewModel
     }
 
-    /// Cancels the SDK's pending submit task, stops recording and clears only
-    /// ExyteChat-owned temporary recording files and in-memory draft state.
+    /// Cancels SDK work and clears in-memory draft state. By default it deletes
+    /// ExyteChat-owned temporary recordings and pasted staging copies; pass
+    /// `false` while the host is still durably copying those files.
     public func discard(deleteOwnedRecordings: Bool = true) {
         inputViewModel.discard(deleteOwnedRecordings: deleteOwnedRecordings)
     }
@@ -53,10 +54,16 @@ public final class ChatComposerState {
         await inputViewModel.finalizeForUnmount()
     }
 
-    /// Deletes SDK-owned temporary recordings retained by
-    /// `discard(deleteOwnedRecordings: false)` after the host has durably copied
-    /// them. Documents and Photos library URLs are never included.
+    /// Compatibility release API. It deletes all ExyteChat-owned files retained
+    /// by `discard(deleteOwnedRecordings: false)`, including pasted staging
+    /// copies. Original documents and Photos library URLs are never included.
     public func releaseOwnedRecordings() async {
         await inputViewModel.releaseOwnedRecordings()
+    }
+
+    /// Releases every ExyteChat-owned staged file retained after a failed
+    /// durable handoff, including recordings and pasted attachments.
+    public func releaseOwnedFiles() async {
+        await inputViewModel.releaseOwnedFiles()
     }
 }

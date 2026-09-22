@@ -157,7 +157,14 @@ public struct Message: Identifiable, Sendable {
         }
 
         let documentAttachments = draft.documents.map { document in
-            Attachment(id: document.id, url: document.url, type: .document, fileName: document.fileName, fileSize: document.fileSize)
+            Attachment(
+                id: document.id,
+                url: document.url,
+                type: .document,
+                fileName: document.fileName,
+                fileSize: document.fileSize,
+                contentTypeIdentifier: document.contentTypeIdentifier
+            )
         }
 
         let giphyMediaId = draft.giphyMedia?.id

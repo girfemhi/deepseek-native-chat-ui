@@ -99,8 +99,8 @@ struct InputView: View {
             .onChange(of: viewModel.inputEnabled) { _, enabled in
                 if !enabled { showAttachmentActions = false }
             }
-            .onChange(of: viewModel.isCommitting) { _, committing in
-                if committing { showAttachmentActions = false }
+            .onChange(of: viewModel.isCommitting || viewModel.isImportingPaste) { _, busy in
+                if busy { showAttachmentActions = false }
             }
     }
 
@@ -206,7 +206,7 @@ struct InputView: View {
                     .frame(width: 44, height: 44)
                     .background(Circle().fill(theme.colors.mainText.opacity(0.06)))
             }
-            .disabled(!viewModel.inputEnabled || viewModel.isCommitting)
+            .disabled(!viewModel.inputEnabled || viewModel.isCommitting || viewModel.isImportingPaste)
             .accessibilityLabel(localization.addToConversationText)
         } else {
             Color.clear.frame(width: 44, height: 44)
@@ -248,7 +248,10 @@ struct InputView: View {
                     style: style,
                     layout: layout,
                     availableInputs: availableInputs,
-                    localization: localization
+                    localization: localization,
+                    onPasteProviders: { providers, insertText in
+                        viewModel.stagePastedProviders(providers, insertText: insertText)
+                    }
                 )
                 .disabled(!viewModel.inputEnabled)
             }
@@ -319,7 +322,7 @@ struct InputView: View {
             onAction(.send)
         } label: {
             Group {
-                if viewModel.isCommitting {
+                if viewModel.isCommitting || viewModel.isImportingPaste {
                     ProgressView()
                         .tint(theme.colors.mainTint)
                         .viewSize(actionButtonSize)
@@ -338,8 +341,8 @@ struct InputView: View {
                 }
             }
         }
-        .disabled(viewModel.sendDisabled || viewModel.isCommitting || !state.canSend)
-        .opacity(viewModel.sendDisabled || viewModel.isCommitting || !state.canSend ? 0.42 : 1)
+        .disabled(viewModel.sendDisabled || viewModel.isCommitting || (!state.canSend && !viewModel.isImportingPaste))
+        .opacity(viewModel.sendDisabled || viewModel.isCommitting || (!state.canSend && !viewModel.isImportingPaste) ? 0.42 : 1)
     }
 
     var addButton: some View {

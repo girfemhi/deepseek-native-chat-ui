@@ -79,7 +79,7 @@ extension InputView {
             ForEach(viewModel.attachments.medias) { media in
                 MediaAttachmentThumbnail(media: media) {
                     withAnimation(.easeInOut(duration: 0.2)) {
-                        viewModel.attachments.medias.removeAll { $0.id == media.id }
+                        viewModel.removeMedia(id: media.id)
                     }
                 }
             }
@@ -91,7 +91,7 @@ extension InputView {
             ForEach(viewModel.attachments.documents) { document in
                 DocumentAttachmentThumbnail(document: document) {
                     withAnimation(.easeInOut(duration: 0.2)) {
-                        viewModel.attachments.documents.removeAll { $0.id == document.id }
+                        viewModel.removeDocument(id: document.id)
                     }
                 }
             }

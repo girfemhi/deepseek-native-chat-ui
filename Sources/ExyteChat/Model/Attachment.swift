@@ -67,6 +67,7 @@ public struct Attachment: Codable, Identifiable, Hashable, Sendable {
     /// Used for .document attachments
     public let fileName: String?
     public let fileSize: Int?
+    public let contentTypeIdentifier: String?
 
     public init(
         id: String,
@@ -77,7 +78,8 @@ public struct Attachment: Codable, Identifiable, Hashable, Sendable {
         fullCacheKey: String? = nil,
         fullUploadStatus: UploadStatus? = nil,
         fileName: String? = nil,
-        fileSize: Int? = nil
+        fileSize: Int? = nil,
+        contentTypeIdentifier: String? = nil
     ) {
         self.id = id
         self.thumbnail = thumbnail
@@ -88,6 +90,7 @@ public struct Attachment: Codable, Identifiable, Hashable, Sendable {
         self.fullUploadStatus = fullUploadStatus
         self.fileName = fileName
         self.fileSize = fileSize
+        self.contentTypeIdentifier = contentTypeIdentifier
     }
 
     public init(
@@ -96,7 +99,8 @@ public struct Attachment: Codable, Identifiable, Hashable, Sendable {
         type: AttachmentType,
         cacheKey: String? = nil,
         fileName: String? = nil,
-        fileSize: Int? = nil
+        fileSize: Int? = nil,
+        contentTypeIdentifier: String? = nil
     ) {
         self.init(
             id: id,
@@ -106,7 +110,8 @@ public struct Attachment: Codable, Identifiable, Hashable, Sendable {
             thumbnailCacheKey: cacheKey,
             fullCacheKey: cacheKey,
             fileName: fileName,
-            fileSize: fileSize
+            fileSize: fileSize,
+            contentTypeIdentifier: contentTypeIdentifier
         )
     }
 
@@ -119,7 +124,8 @@ public struct Attachment: Codable, Identifiable, Hashable, Sendable {
         thumbnailCacheKey: String? = nil,
         fullCacheKey: String? = nil,
         fileName: String? = nil,
-        fileSize: Int? = nil
+        fileSize: Int? = nil,
+        contentTypeIdentifier: String? = nil
     ) -> Attachment {
         Attachment(
             id: id ?? self.id,
@@ -130,7 +136,8 @@ public struct Attachment: Codable, Identifiable, Hashable, Sendable {
             fullCacheKey: fullCacheKey ?? self.fullCacheKey,
             fullUploadStatus: fullUploadStatus ?? self.fullUploadStatus,
             fileName: fileName ?? self.fileName,
-            fileSize: fileSize ?? self.fileSize
+            fileSize: fileSize ?? self.fileSize,
+            contentTypeIdentifier: contentTypeIdentifier ?? self.contentTypeIdentifier
         )
     }
 }

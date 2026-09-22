@@ -11,11 +11,19 @@ public struct DocumentItem: Identifiable, Hashable, Sendable {
     public let url: URL
     public let fileName: String
     public let fileSize: Int?
+    public let contentTypeIdentifier: String?
 
-    public init(id: String = UUID().uuidString, url: URL, fileName: String? = nil, fileSize: Int? = nil) {
+    public init(
+        id: String = UUID().uuidString,
+        url: URL,
+        fileName: String? = nil,
+        fileSize: Int? = nil,
+        contentTypeIdentifier: String? = nil
+    ) {
         self.id = id
         self.url = url
         self.fileName = fileName ?? url.lastPathComponent
         self.fileSize = fileSize
+        self.contentTypeIdentifier = contentTypeIdentifier
     }
 }

@@ -2,6 +2,7 @@ import XCTest
 @testable import ExyteChat
 import ExyteMediaPicker
 import UIKit
+import UniformTypeIdentifiers
 
 @MainActor
 final class AgentComposerTests: XCTestCase {
@@ -656,6 +657,184 @@ final class AgentComposerTests: XCTestCase {
         XCTAssertEqual(ChatLocalization.simplifiedChinese.photoLibraryText, "相册")
     }
 
+    func testPasteImporterStagesImageAndDocumentsInProviderOrder() async throws {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2))
+        let png = renderer.image { context in UIColor.red.setFill(); context.fill(CGRect(x: 0, y: 0, width: 2, height: 2)) }.pngData()!
+        let imageProvider = dataProvider(name: "photo.png", type: .png, data: png)
+        let firstDocument = dataProvider(name: "first.pdf", type: .pdf, data: Data("first".utf8))
+        let secondDocument = dataProvider(name: "second.pdf", type: .pdf, data: Data("second".utf8))
+        let providers = [imageProvider, firstDocument, secondDocument].enumerated().map {
+            SendableItemProvider(index: $0.offset, provider: $0.element)
+        }
+
+        let payload = await PastedContentImporter.importProviders(providers)
+        defer { PastedContentImporter.deleteOwned(payload.ownedURLs) }
+
+        XCTAssertEqual(payload.medias.count, 1)
+        XCTAssertEqual(payload.documents.map { $0.0.fileName }, ["first.pdf", "second.pdf"])
+        XCTAssertEqual(payload.documents.map { $0.0.contentTypeIdentifier }, [UTType.pdf.identifier, UTType.pdf.identifier])
+        XCTAssertTrue(payload.ownedURLs.allSatisfy(PastedContentImporter.isOwned))
+    }
+
+    func testPasteImporterCopiesFileURLAndNeverDeletesOriginal() async throws {
+        let original = FileManager.tempDirPath.appendingPathComponent("source-\(UUID().uuidString).docx")
+        try Data("original".utf8).write(to: original)
+        defer { try? FileManager.default.removeItem(at: original) }
+        let provider = NSItemProvider(item: original as NSURL, typeIdentifier: UTType.fileURL.identifier)
+        provider.suggestedName = "source.docx"
+
+        let payload = await PastedContentImporter.importProviders([
+            SendableItemProvider(index: 0, provider: provider)
+        ])
+        defer { PastedContentImporter.deleteOwned(payload.ownedURLs) }
+
+        XCTAssertEqual(payload.documents.count, 1)
+        XCTAssertNotEqual(payload.documents[0].0.url, original)
+        XCTAssertTrue(PastedContentImporter.isOwned(payload.documents[0].0.url))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: original.path))
+    }
+
+    func testPasteDetectionLeavesPlainTextAndLongWebURLToUIKitFallback() {
+        let text = NSItemProvider(object: "plain text" as NSString)
+        let longURL = NSItemProvider(object: "https://example.com/" + String(repeating: "a", count: 2_000) as NSString)
+
+        XCTAssertFalse(PastedContentImporter.containsAttachment([text]))
+        XCTAssertFalse(PastedContentImporter.containsAttachment([longURL]))
+    }
+
+    func testPasteImporterRejectsFolderAndSymlinkWithoutLeavingPartialStage() async throws {
+        let folder = FileManager.tempDirPath.appendingPathComponent("paste-folder-\(UUID().uuidString)", isDirectory: true)
+        let source = FileManager.tempDirPath.appendingPathComponent("paste-source-\(UUID().uuidString).pdf")
+        let symlink = FileManager.tempDirPath.appendingPathComponent("paste-link-\(UUID().uuidString).pdf")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        try Data("source".utf8).write(to: source)
+        try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: source)
+        defer {
+            try? FileManager.default.removeItem(at: folder)
+            try? FileManager.default.removeItem(at: symlink)
+            try? FileManager.default.removeItem(at: source)
+        }
+        let before = stagedPasteFilenames()
+        let folderProvider = NSItemProvider(item: folder as NSURL, typeIdentifier: UTType.fileURL.identifier)
+        let symlinkProvider = NSItemProvider(item: symlink as NSURL, typeIdentifier: UTType.fileURL.identifier)
+
+        let payload = await PastedContentImporter.importProviders([
+            SendableItemProvider(index: 0, provider: folderProvider),
+            SendableItemProvider(index: 1, provider: symlinkProvider)
+        ])
+
+        XCTAssertTrue(payload.medias.isEmpty)
+        XCTAssertTrue(payload.documents.isEmpty)
+        XCTAssertEqual(stagedPasteFilenames(), before)
+    }
+
+    func testDeferredAckRemovesSubmittedPasteButKeepsInFlightNewDocument() async {
+        let provider = dataProvider(name: "submitted.pdf", type: .pdf, data: Data("submitted".utf8))
+        let model = InputViewModel()
+        model.onStart()
+        model.stagePastedProviders([provider], insertText: { _ in })
+        await waitUntil { !model.isImportingPaste && model.attachments.documents.count == 1 }
+        let stagedURL = model.attachments.documents[0].url
+        let gate = CommitGate()
+        model.sendCommitMode = .deferred { draft in await gate.submit(draft) }
+
+        model.send()
+        await waitUntil { gate.hasSubmission }
+        let newDocument = DocumentItem(url: URL(fileURLWithPath: "/tmp/new-after-send.pdf"))
+        model.attachments.documents.append(newDocument)
+        gate.resolve(true)
+        await waitUntil { !model.isCommitting }
+
+        XCTAssertEqual(model.attachments.documents.map(\.id), [newDocument.id])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stagedURL.path))
+    }
+
+    func testCancelledPasteImportDoesNotAttachOrLeakOwnedStage() async {
+        let provider = NSItemProvider()
+        provider.suggestedName = "cancelled.pdf"
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.pdf.identifier, visibility: .all) { completion in
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) {
+                completion(Data("cancelled".utf8), nil)
+            }
+            return nil
+        }
+        let before = stagedPasteFilenames()
+        let state = ChatComposerState(inputViewModel: InputViewModel())
+        state.inputViewModel.stagePastedProviders([provider], insertText: { _ in })
+
+        state.discard()
+        try? await Task.sleep(for: .milliseconds(120))
+
+        XCTAssertTrue(state.inputViewModel.attachments.documents.isEmpty)
+        XCTAssertTrue(state.inputViewModel.attachments.medias.isEmpty)
+        XCTAssertEqual(stagedPasteFilenames(), before)
+    }
+
+    func testSendRequestedDuringPasteWaitsForStagingToFinish() async {
+        let provider = NSItemProvider()
+        provider.suggestedName = "queued.pdf"
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.pdf.identifier, visibility: .all) { completion in
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.03) {
+                completion(Data("queued".utf8), nil)
+            }
+            return nil
+        }
+        let model = InputViewModel()
+        var submitted: DraftMessage?
+        model.sendCommitMode = .deferred { draft in
+            submitted = draft
+            return false
+        }
+        model.stagePastedProviders([provider], insertText: { _ in })
+
+        model.send()
+        XCTAssertNil(submitted)
+        await waitUntil { !model.isImportingPaste && !model.isCommitting && submitted != nil }
+
+        XCTAssertEqual(submitted?.documents.first?.fileName, "queued.pdf")
+        let stagedURLs = submitted?.documents.map(\.url) ?? []
+        PastedContentImporter.deleteOwned(stagedURLs)
+    }
+
+    func testDiscardCanRetainPastedFileUntilExplicitOwnedFilesRelease() async {
+        let state = ChatComposerState(inputViewModel: InputViewModel())
+        let provider = dataProvider(name: "retained.pdf", type: .pdf, data: Data("retained".utf8))
+        state.inputViewModel.stagePastedProviders([provider], insertText: { _ in })
+        await waitUntil { !state.inputViewModel.isImportingPaste && state.inputViewModel.attachments.documents.count == 1 }
+        let stagedURL = state.inputViewModel.attachments.documents[0].url
+
+        state.discard(deleteOwnedRecordings: false)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: stagedURL.path))
+        await state.releaseOwnedFiles()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stagedURL.path))
+    }
+
+    func testCompatibilityRecordingReleaseAlsoReleasesRetainedPaste() async {
+        let state = ChatComposerState(inputViewModel: InputViewModel())
+        let provider = dataProvider(name: "compat.pdf", type: .pdf, data: Data("compat".utf8))
+        state.inputViewModel.stagePastedProviders([provider], insertText: { _ in })
+        await waitUntil { !state.inputViewModel.isImportingPaste && state.inputViewModel.attachments.documents.count == 1 }
+        let stagedURL = state.inputViewModel.attachments.documents[0].url
+
+        state.discard(deleteOwnedRecordings: false)
+        await state.releaseOwnedRecordings()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stagedURL.path))
+    }
+
+    func testDefaultDiscardDeletesOwnedPastedFile() async {
+        let state = ChatComposerState(inputViewModel: InputViewModel())
+        let provider = dataProvider(name: "delete.pdf", type: .pdf, data: Data("delete".utf8))
+        state.inputViewModel.stagePastedProviders([provider], insertText: { _ in })
+        await waitUntil { !state.inputViewModel.isImportingPaste && state.inputViewModel.attachments.documents.count == 1 }
+        let stagedURL = state.inputViewModel.attachments.documents[0].url
+
+        state.discard()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stagedURL.path))
+    }
+
     func testComposerDiscardCancelsLateAcknowledgementAndDeletesOnlyOwnedRecording() async throws {
         let ownedURL = RecordingFileStore.makeURL(fileExtension: ".m4a")
         let unrelatedURL = FileManager.tempDirPath.appendingPathComponent("unrelated-recording-\(UUID().uuidString).m4a")
@@ -914,12 +1093,27 @@ final class AgentComposerTests: XCTestCase {
         XCTAssertEqual(actualAlpha, alpha, accuracy: 0.000_001, file: file, line: line)
     }
 
+    private func dataProvider(name: String, type: UTType, data: Data) -> NSItemProvider {
+        let provider = NSItemProvider()
+        provider.suggestedName = name
+        provider.registerDataRepresentation(forTypeIdentifier: type.identifier, visibility: .all) { completion in
+            completion(data, nil)
+            return nil
+        }
+        return provider
+    }
+
+    private func stagedPasteFilenames() -> Set<String> {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: FileManager.tempDirPath.path)) ?? []
+        return Set(names.filter { $0.hasPrefix(PastedContentImporter.filenamePrefix) })
+    }
+
     private func waitUntil(
         _ predicate: @escaping @MainActor () -> Bool,
         iterations: Int = 200
     ) async {
         for _ in 0..<iterations where !predicate() {
-            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(1))
         }
         XCTAssertTrue(predicate())
     }

@@ -33,6 +33,7 @@ final class InputViewModel: ObservableObject {
 
     @Published var showActivityIndicator = false
     @Published var isCommitting = false
+    @Published var isImportingPaste = false
 
     var inputEnabled = true
     var sendDisabled = false
@@ -67,6 +68,11 @@ final class InputViewModel: ObservableObject {
     private var retainedOwnedRecordingURLs: Set<URL> = []
     private var recordingStopTask: Task<Void, Never>?
     private var unmountFinalizationTask: Task<ChatComposerFinalization, Never>?
+    private var pasteImportTask: Task<Void, Never>?
+    private var pasteGeneration = 0
+    private var sendAfterPasteImport = false
+    private var ownedPastedURLs: Set<URL> = []
+    private var retainedOwnedPastedURLs: Set<URL> = []
     private let legacyMountID = UUID()
     private var activeMountIDs: Set<UUID> = []
 
@@ -109,6 +115,7 @@ final class InputViewModel: ObservableObject {
             flushDraftChange()
             return
         }
+        cancelPasteImport()
         let tailFinalization = finalization(for: checkpoint())
         subscriptions.removeAll()
         unmountFinalizationTask = Task { @MainActor [weak self] in
@@ -143,6 +150,7 @@ final class InputViewModel: ObservableObject {
                 state = attachments.recording == nil ? .empty : .hasRecording
             }
         }
+        cancelPasteImport()
     }
 
     func discard(deleteOwnedRecordings: Bool = true) {
@@ -151,10 +159,12 @@ final class InputViewModel: ObservableObject {
             pendingDraft?.recording?.url
         ].compactMap { $0 }.filter(RecordingFileStore.isOwned))
             .union(retainedOwnedRecordingURLs)
+        let pastedURLs = ownedPastedURLs.union(retainedOwnedPastedURLs)
 
         submissionEpoch += 1
         submissionTask?.cancel()
         submissionTask = nil
+        cancelPasteImport()
         let recordingToken = invalidateRecordingStart()
         draftChangeTask?.cancel()
         draftChangeTask = nil
@@ -170,9 +180,13 @@ final class InputViewModel: ObservableObject {
 
         if deleteOwnedRecordings {
             retainedOwnedRecordingURLs.removeAll()
+            retainedOwnedPastedURLs.removeAll()
+            PastedContentImporter.deleteOwned(pastedURLs)
         } else {
             retainedOwnedRecordingURLs.formUnion(ownedRecordingURLs)
+            retainedOwnedPastedURLs.formUnion(pastedURLs)
         }
+        ownedPastedURLs.removeAll()
 
         recordingStopTask = Task {
             await recorder.stopRecording(token: recordingToken)
@@ -190,6 +204,13 @@ final class InputViewModel: ObservableObject {
         let urls = retainedOwnedRecordingURLs
         retainedOwnedRecordingURLs.removeAll()
         urls.forEach(RecordingFileStore.deleteIfOwned)
+        let pastedURLs = retainedOwnedPastedURLs
+        retainedOwnedPastedURLs.removeAll()
+        PastedContentImporter.deleteOwned(pastedURLs)
+    }
+
+    func releaseOwnedFiles() async {
+        await releaseOwnedRecordings()
     }
 
     @discardableResult
@@ -297,6 +318,10 @@ final class InputViewModel: ObservableObject {
     }
 
     func send() {
+        if isImportingPaste {
+            sendAfterPasteImport = true
+            return
+        }
         guard inputEnabled, !sendDisabled, !isCommitting, canSubmitDraft else { return }
         isCommitting = true
         submissionEpoch += 1
@@ -314,6 +339,69 @@ final class InputViewModel: ObservableObject {
     func edit(_ closure: @escaping (String) -> Void) {
         saveEditingClosure = closure
         state = .editing
+    }
+
+    func stagePastedProviders(
+        _ providers: [NSItemProvider],
+        insertText: @escaping (String) -> Void
+    ) {
+        guard inputEnabled, !isCommitting, !providers.isEmpty else { return }
+        pasteGeneration += 1
+        let generation = pasteGeneration
+        pasteImportTask?.cancel()
+        isImportingPaste = true
+        let wrappedProviders = providers.enumerated().map {
+            SendableItemProvider(index: $0.offset, provider: $0.element)
+        }
+        pasteImportTask = Task { @MainActor [weak self] in
+            let payload = await PastedContentImporter.importProviders(wrappedProviders)
+            guard let self,
+                  generation == pasteGeneration,
+                  inputEnabled,
+                  !Task.isCancelled else {
+                PastedContentImporter.deleteOwned(payload.ownedURLs)
+                return
+            }
+
+            attachments.medias.append(contentsOf: payload.medias.map(\.0))
+            attachments.documents.append(contentsOf: payload.documents.map(\.0))
+            ownedPastedURLs.formUnion(payload.ownedURLs)
+            if !payload.textFragments.isEmpty {
+                insertText(payload.textFragments.joined(separator: "\n"))
+            }
+            isImportingPaste = false
+            pasteImportTask = nil
+            if sendAfterPasteImport {
+                sendAfterPasteImport = false
+                send()
+            }
+        }
+    }
+
+    func removeMedia(id: UUID) {
+        if let media = attachments.medias.first(where: { $0.id == id }),
+           let pasted = media.source as? PastedMediaModel {
+            ownedPastedURLs.remove(pasted.url)
+            PastedContentImporter.deleteOwned([pasted.url])
+        }
+        attachments.medias.removeAll { $0.id == id }
+    }
+
+    func removeDocument(id: String) {
+        if let document = attachments.documents.first(where: { $0.id == id }),
+           PastedContentImporter.isOwned(document.url) {
+            ownedPastedURLs.remove(document.url)
+            PastedContentImporter.deleteOwned([document.url])
+        }
+        attachments.documents.removeAll { $0.id == id }
+    }
+
+    private func cancelPasteImport() {
+        pasteGeneration += 1
+        pasteImportTask?.cancel()
+        pasteImportTask = nil
+        isImportingPaste = false
+        sendAfterPasteImport = false
     }
 
     func inputViewAction() -> (InputViewAction) -> Void {
@@ -671,20 +759,32 @@ private extension InputViewModel {
                 let textUnchanged = textRevision == submittedTextRevision
                 let attachmentsUnchanged = attachmentRevision == submittedAttachmentRevision
                 let submittedRecordingURL = draft.recording?.url
+                let submittedPastedURLs = Set(
+                    draft.medias.compactMap { ($0.source as? PastedMediaModel)?.url }
+                        + draft.documents.map(\.url).filter(PastedContentImporter.isOwned)
+                )
                 let submittedRecordingStillCurrent = submittedRecordingURL != nil
                     && attachments.recording?.url == submittedRecordingURL
+                let submittedMediaIDs = Set(draft.medias.map(\.id))
+                let submittedDocumentIDs = Set(draft.documents.map(\.id))
 
                 if textUnchanged {
                     text = ""
                 }
                 if attachmentsUnchanged {
                     attachments = InputViewAttachments()
-                } else if submittedRecordingStillCurrent {
-                    attachments.recording = nil
+                } else {
+                    attachments.medias.removeAll { submittedMediaIDs.contains($0.id) }
+                    attachments.documents.removeAll { submittedDocumentIDs.contains($0.id) }
+                    if submittedRecordingStillCurrent {
+                        attachments.recording = nil
+                    }
                 }
                 if submittedRecordingStillCurrent {
                     RecordingFileStore.deleteIfOwned(submittedRecordingURL)
                 }
+                PastedContentImporter.deleteOwned(submittedPastedURLs)
+                ownedPastedURLs.subtract(submittedPastedURLs)
                 state = hasDraftContent ? .hasTextOrMedia : .empty
                 pendingDraft = nil
                 pendingDraftText = nil
