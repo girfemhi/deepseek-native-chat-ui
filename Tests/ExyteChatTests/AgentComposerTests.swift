@@ -3,6 +3,7 @@ import XCTest
 import ExyteMediaPicker
 import UIKit
 import UniformTypeIdentifiers
+import CryptoKit
 
 @MainActor
 final class AgentComposerTests: XCTestCase {
@@ -703,6 +704,22 @@ final class AgentComposerTests: XCTestCase {
         XCTAssertEqual(payload.documents.map { $0.0.fileName }, ["animated.gif", "paper.pdf"])
     }
 
+    func testUnnamedGenericPDFGetsFriendlyNameAndSpecificMIME() async {
+        let provider = NSItemProvider()
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.data.identifier, visibility: .all) { completion in
+            completion(Data("%PDF-1.7".utf8), nil)
+            return nil
+        }
+        let payload = await PastedContentImporter.importProviders([
+            SendableItemProvider(index: 0, provider: provider)
+        ])
+        defer { PastedContentImporter.deleteOwned(payload.ownedURLs) }
+
+        XCTAssertEqual(payload.documents.first?.0.fileName, "Pasted file.pdf")
+        XCTAssertEqual(payload.documents.first?.0.contentTypeIdentifier, UTType.pdf.identifier)
+        XCTAssertFalse(payload.documents.first?.0.fileName.contains(PastedContentImporter.filenamePrefix) == true)
+    }
+
     func testPasteImporterCopiesFileURLAndNeverDeletesOriginal() async throws {
         let original = FileManager.tempDirPath.appendingPathComponent("source-\(UUID().uuidString).docx")
         try Data("original".utf8).write(to: original)
@@ -746,6 +763,65 @@ final class AgentComposerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
         XCTAssertEqual(payload.documents.count, 1)
         XCTAssertEqual(try Data(contentsOf: payload.documents[0].0.url), Data("ephemeral".utf8))
+    }
+
+    func testPasteboardRoundTripFileProviderCopiesUnderlyingPDFBytes() async throws {
+        let source = FileManager.tempDirPath.appendingPathComponent("示例交付清单-\(UUID().uuidString).pdf")
+        var expected = Data("%PDF-1.7\n".utf8)
+        expected.append(Data(repeating: 0x41, count: 20 * 1_024 - expected.count))
+        try expected.write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let previousProviders = UIPasteboard.general.itemProviders
+        defer { UIPasteboard.general.itemProviders = previousProviders }
+        UIPasteboard.general.itemProviders = [NSItemProvider(contentsOf: source)!]
+        let roundTripped = UIPasteboard.general.itemProviders
+        roundTripped.forEach { $0.suggestedName = nil }
+
+        let payload = await PastedContentImporter.importProviders(
+            roundTripped.enumerated().map { SendableItemProvider(index: $0.offset, provider: $0.element) }
+        )
+        defer { PastedContentImporter.deleteOwned(payload.ownedURLs) }
+
+        XCTAssertEqual(payload.documents.count, 1)
+        let staged = try Data(contentsOf: payload.documents[0].0.url)
+        XCTAssertEqual(SHA256.hash(data: staged), SHA256.hash(data: expected))
+        XCTAssertEqual(staged.count, expected.count)
+        XCTAssertTrue(staged.starts(with: Data("%PDF-".utf8)))
+        XCTAssertEqual(payload.documents[0].0.contentTypeIdentifier, UTType.pdf.identifier)
+        XCTAssertEqual(payload.documents[0].0.fileName, source.lastPathComponent)
+        XCTAssertFalse(payload.documents[0].0.fileName.contains(PastedContentImporter.filenamePrefix))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+    }
+
+    func testMalformedFileURLArchiveIsRejectedWithoutStageLeak() async {
+        let before = stagedPasteFilenames()
+        let provider = NSItemProvider(item: Data("bplist00-not-valid".utf8) as NSData, typeIdentifier: UTType.fileURL.identifier)
+
+        let payload = await PastedContentImporter.importProviders([
+            SendableItemProvider(index: 0, provider: provider)
+        ])
+
+        XCTAssertTrue(payload.documents.isEmpty)
+        XCTAssertTrue(payload.medias.isEmpty)
+        XCTAssertEqual(stagedPasteFilenames(), before)
+    }
+
+    func testSecureArchivedNSURLFileRepresentationIsDecodedAndStaged() async throws {
+        let source = FileManager.tempDirPath.appendingPathComponent("secure-url-\(UUID().uuidString).pdf")
+        let expected = Data("%PDF-secure".utf8)
+        try expected.write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let archive = try NSKeyedArchiver.archivedData(withRootObject: source as NSURL, requiringSecureCoding: true)
+        XCTAssertTrue(archive.starts(with: Data("bplist00".utf8)))
+        let provider = NSItemProvider(item: archive as NSData, typeIdentifier: UTType.fileURL.identifier)
+
+        let payload = await PastedContentImporter.importProviders([
+            SendableItemProvider(index: 0, provider: provider)
+        ])
+        defer { PastedContentImporter.deleteOwned(payload.ownedURLs) }
+
+        XCTAssertEqual(payload.documents.count, 1)
+        XCTAssertEqual(try Data(contentsOf: payload.documents[0].0.url), expected)
     }
 
     func testPasteDetectionLeavesPlainTextAndLongWebURLToUIKitFallback() {

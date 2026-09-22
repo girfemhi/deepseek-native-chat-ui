@@ -71,7 +71,8 @@ enum PastedContentImporter {
         }
 
         let types = item.provider.registeredTypeIdentifiers.compactMap(UTType.init)
-        let attachmentType = types.first { $0.conforms(to: .image) || $0.conforms(to: .movie) }
+        let attachmentType = types.first { isSpecificAttachmentType($0) }
+            ?? types.first { $0.conforms(to: .image) || $0.conforms(to: .movie) }
             ?? types.first {
                 $0 != .fileURL
                     && $0.conforms(to: .data)
@@ -112,17 +113,18 @@ enum PastedContentImporter {
                     continuation.resume(returning: stageFile(
                         at: url,
                         provider: item.provider,
-                        type: UTType(filenameExtension: url.pathExtension)
+                        type: UTType(filenameExtension: url.pathExtension),
+                        fallbackFileName: url.lastPathComponent
                     ))
                     return
                 }
                 if let data = value as? Data,
-                   let url = URL(dataRepresentation: data, relativeTo: nil),
-                   url.isFileURL {
+                   let url = decodeFileURLRepresentation(data) {
                     continuation.resume(returning: stageFile(
                         at: url,
                         provider: item.provider,
-                        type: UTType(filenameExtension: url.pathExtension)
+                        type: UTType(filenameExtension: url.pathExtension),
+                        fallbackFileName: url.lastPathComponent
                     ))
                     return
                 }
@@ -140,10 +142,32 @@ enum PastedContentImporter {
         }
     }
 
-    private static func stageFile(at url: URL, provider: NSItemProvider, type: UTType?) -> ImportedPastePayload? {
+    private static func decodeFileURLRepresentation(_ data: Data) -> URL? {
+        guard data.count <= 64 * 1_024 else { return nil }
+        if data.starts(with: Data("bplist00".utf8)) {
+            guard let value = try? NSKeyedUnarchiver.unarchivedObject(ofClass: NSURL.self, from: data) else {
+                return nil
+            }
+            let url = value as URL
+            return url.isFileURL ? url : nil
+        }
+        if let string = String(data: data, encoding: .utf8),
+           string.hasPrefix("file://"),
+           let url = URL(string: string), url.isFileURL {
+            return url
+        }
+        return nil
+    }
+
+    private static func stageFile(
+        at url: URL,
+        provider: NSItemProvider,
+        type: UTType?,
+        fallbackFileName: String? = nil
+    ) -> ImportedPastePayload? {
         guard url.isFileURL,
               let staged = copyToOwnedStage(url, provider: provider, type: type) else { return nil }
-        return makePayload(url: staged, provider: provider, type: type)
+        return makePayload(url: staged, provider: provider, type: type, fallbackFileName: fallbackFileName)
     }
 
     private static func copyToOwnedStage(_ source: URL, provider: NSItemProvider, type: UTType?) -> URL? {
@@ -199,8 +223,13 @@ enum PastedContentImporter {
         return destination
     }
 
-    private static func makePayload(url: URL, provider: NSItemProvider, type: UTType?) -> ImportedPastePayload? {
-        let resolved = type ?? UTType(filenameExtension: url.pathExtension)
+    private static func makePayload(
+        url: URL,
+        provider: NSItemProvider,
+        type: UTType?,
+        fallbackFileName: String? = nil
+    ) -> ImportedPastePayload? {
+        let resolved = resolvedContentType(type, url: url)
         if resolved?.conforms(to: .movie) == true || isSupportedBitmap(resolved, url: url) {
             let mediaType: MediaType = resolved?.conforms(to: .movie) == true ? .video : .image
             let media = Media(source: PastedMediaModel(url: url, mediaType: mediaType))
@@ -209,11 +238,45 @@ enum PastedContentImporter {
         let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue
         let document = DocumentItem(
             url: url,
-            fileName: provider.suggestedName ?? url.lastPathComponent,
+            fileName: displayName(provider: provider, type: resolved, fallbackFileName: fallbackFileName),
             fileSize: size,
             contentTypeIdentifier: resolved?.identifier
         )
         return ImportedPastePayload(documents: [(document, url)])
+    }
+
+    private static func isSpecificAttachmentType(_ type: UTType) -> Bool {
+        guard type.conforms(to: .data), !type.conforms(to: .text), !type.conforms(to: .url) else { return false }
+        return type != .data && type != .item && type != .content
+    }
+
+    private static func resolvedContentType(_ type: UTType?, url: URL) -> UTType? {
+        if let type, type != .data, type != .item, type != .content { return type }
+        if let extType = UTType(filenameExtension: url.pathExtension), !url.pathExtension.isEmpty {
+            return extType
+        }
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return type }
+        defer { try? handle.close() }
+        let prefix = (try? handle.read(upToCount: 16)) ?? nil
+        guard let prefix else { return type }
+        if prefix.starts(with: Data("%PDF".utf8)) { return .pdf }
+        if prefix.starts(with: Data("GIF87a".utf8)) || prefix.starts(with: Data("GIF89a".utf8)) { return .gif }
+        if prefix.starts(with: Data([0x89, 0x50, 0x4E, 0x47])) { return .png }
+        if prefix.starts(with: Data([0xFF, 0xD8, 0xFF])) { return .jpeg }
+        return type
+    }
+
+    private static func displayName(provider: NSItemProvider, type: UTType?, fallbackFileName: String?) -> String {
+        if let suggested = provider.suggestedName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !suggested.isEmpty {
+            return suggested
+        }
+        if let fallbackFileName, !fallbackFileName.isEmpty {
+            return fallbackFileName
+        }
+        let base = "Pasted file"
+        guard let ext = type?.preferredFilenameExtension, !ext.isEmpty else { return base }
+        return base + "." + ext
     }
 
     private static func isSupportedBitmap(_ type: UTType?, url: URL) -> Bool {
