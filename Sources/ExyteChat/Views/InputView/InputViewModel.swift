@@ -273,6 +273,9 @@ final class InputViewModel: ObservableObject {
     }
 
     private func startRecording(state requestedState: InputViewState) {
+        guard inputEnabled else { return }
+        NotificationCenter.default.post(name: .chatAudioRecordingWillBegin, object: nil)
+
         let previousToken = invalidateRecordingStart()
         recordingGeneration += 1
         let generation = recordingGeneration

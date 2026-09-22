@@ -563,6 +563,45 @@ final class AgentComposerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: ownedURL.path))
     }
 
+    func testRecordingStartPostsPublicAudioCoordinationNotificationOnce() async {
+        let recorder = SuspendedRecordingService()
+        let model = InputViewModel(recorder: recorder)
+        var notificationCount = 0
+        let observer = NotificationCenter.default.addObserver(
+            forName: .chatAudioRecordingWillBegin,
+            object: nil,
+            queue: nil
+        ) { _ in
+            notificationCount += 1
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        model.inputViewAction()(.recordAudioTap)
+
+        XCTAssertEqual(notificationCount, 1)
+        await waitUntilAsync { await recorder.hasPendingStart }
+        model.discard()
+        await recorder.releaseStart(with: nil)
+    }
+
+    func testDisabledComposerDoesNotPostRecordingNotification() {
+        let model = InputViewModel()
+        model.setInputEnabled(false)
+        var notificationCount = 0
+        let observer = NotificationCenter.default.addObserver(
+            forName: .chatAudioRecordingWillBegin,
+            object: nil,
+            queue: nil
+        ) { _ in
+            notificationCount += 1
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        model.inputViewAction()(.recordAudioTap)
+
+        XCTAssertEqual(notificationCount, 0)
+    }
+
     private func assertRGBA(
         _ color: UIColor,
         _ red: CGFloat,

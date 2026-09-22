@@ -7,6 +7,7 @@
 
 import Foundation
 
-extension Notification.Name {
+public extension Notification.Name {
     static let chatAudioIsPlaying = Notification.Name("chatAudioIsPlaying")
+    static let chatAudioRecordingWillBegin = Notification.Name("chatAudioRecordingWillBegin")
 }
