@@ -30,6 +30,8 @@ public struct ChatLocalization: Hashable, Sendable {
     public var liveLocationUpdatedMinutesAgoFormat: String
     public var openInMapsText: String
     public var openDocumentText: String
+    public var addToConversationText: String
+    public var photoLibraryText: String
 
     public init(
         inputPlaceholder: String,
@@ -52,7 +54,9 @@ public struct ChatLocalization: Hashable, Sendable {
         liveLocationUpdatedJustNowText: String = String(localized: "updated just now"),
         liveLocationUpdatedMinutesAgoFormat: String = String(localized: "updated %d min ago"),
         openInMapsText: String = String(localized: "Open in Maps"),
-        openDocumentText: String = String(localized: "Open")
+        openDocumentText: String = String(localized: "Open"),
+        addToConversationText: String = String(localized: "Add to conversation"),
+        photoLibraryText: String = String(localized: "Photo Library")
     ) {
         self.inputPlaceholder = inputPlaceholder
         self.signatureText = signatureText
@@ -75,6 +79,8 @@ public struct ChatLocalization: Hashable, Sendable {
         self.liveLocationUpdatedMinutesAgoFormat = liveLocationUpdatedMinutesAgoFormat
         self.openInMapsText = openInMapsText
         self.openDocumentText = openDocumentText
+        self.addToConversationText = addToConversationText
+        self.photoLibraryText = photoLibraryText
     }
 
    public static var defaultLocalization: ChatLocalization {
@@ -99,7 +105,9 @@ public struct ChatLocalization: Hashable, Sendable {
             liveLocationUpdatedJustNowText: String(localized: "updated just now"),
             liveLocationUpdatedMinutesAgoFormat: String(localized: "updated %d min ago"),
             openInMapsText: String(localized: "Open in Maps"),
-            openDocumentText: String(localized: "Open")
+            openDocumentText: String(localized: "Open"),
+            addToConversationText: String(localized: "Add to conversation"),
+            photoLibraryText: String(localized: "Photo Library")
         )
     }
 
@@ -126,7 +134,9 @@ public struct ChatLocalization: Hashable, Sendable {
             liveLocationUpdatedJustNowText: "刚刚更新",
             liveLocationUpdatedMinutesAgoFormat: "%d 分钟前更新",
             openInMapsText: "在地图中打开",
-            openDocumentText: "打开文件"
+            openDocumentText: "打开文件",
+            addToConversationText: "添加到对话",
+            photoLibraryText: "相册"
         )
     }
 }

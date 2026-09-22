@@ -633,6 +633,29 @@ final class AgentComposerTests: XCTestCase {
         XCTAssertEqual(editorial.inputViewCustomizationParameters.inputLayout, .editorial)
     }
 
+    func testAttachmentSheetActionsReuseExistingPickerRoutes() {
+        let model = InputViewModel()
+        let action = model.inputViewAction()
+
+        action(.camera)
+        XCTAssertEqual(model.mediaPickerMode, .camera)
+        XCTAssertTrue(model.showMediaPicker)
+
+        model.showMediaPicker = false
+        action(.photo)
+        XCTAssertEqual(model.mediaPickerMode, .photos)
+        XCTAssertTrue(model.showMediaPicker)
+
+        action(.document)
+        XCTAssertTrue(model.showDocumentPicker)
+        action(.giphy)
+        XCTAssertTrue(model.showGiphyPicker)
+        action(.location)
+        XCTAssertTrue(model.showLocationPicker)
+        XCTAssertEqual(ChatLocalization.simplifiedChinese.addToConversationText, "添加到对话")
+        XCTAssertEqual(ChatLocalization.simplifiedChinese.photoLibraryText, "相册")
+    }
+
     func testComposerDiscardCancelsLateAcknowledgementAndDeletesOnlyOwnedRecording() async throws {
         let ownedURL = RecordingFileStore.makeURL(fileExtension: ".m4a")
         let unrelatedURL = FileManager.tempDirPath.appendingPathComponent("unrelated-recording-\(UUID().uuidString).m4a")

@@ -17,6 +17,7 @@ struct InputView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     @EnvironmentObject var keyboardState: KeyboardState
+    @EnvironmentObject var globalFocusState: GlobalFocusState
 
     @ObservedObject var viewModel: InputViewModel
     @StateObject var recordingPlayer = RecordingPlayer()
@@ -42,6 +43,7 @@ struct InputView: View {
     @State var dragStart: Date?
     @State var tapDelayTimer: Timer?
     @State var cancelGesture = false
+    @State private var showAttachmentActions = false
 
     var onAction: (InputViewAction) -> Void {
         viewModel.inputViewAction()
@@ -63,6 +65,14 @@ struct InputView: View {
         state == .editing ? 88 : actionButtonSize
     }
 
+    var hasAttachmentActions: Bool {
+        availableInputs.contains(.media)
+            || availableInputs.contains(.document)
+            || availableInputs.contains(.giphy)
+            || availableInputs.contains(.staticLocation)
+            || availableInputs.contains(.liveLocation)
+    }
+
     var body: some View {
         inputLayout
             .background(backgroundColor)
@@ -74,6 +84,23 @@ struct InputView: View {
             }
             .onDrag(towards: .bottom, ofAmount: 100...) {
                 keyboardState.resignFirstResponder()
+            }
+            .sheet(isPresented: $showAttachmentActions) {
+                AttachmentActionsSheet(
+                    availableInputs: availableInputs,
+                    localization: localization,
+                    onAction: onAction
+                )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.hidden)
+                .presentationCornerRadius(28)
+                .presentationBackground(theme.colors.mainBG)
+            }
+            .onChange(of: viewModel.inputEnabled) { _, enabled in
+                if !enabled { showAttachmentActions = false }
+            }
+            .onChange(of: viewModel.isCommitting) { _, committing in
+                if committing { showAttachmentActions = false }
             }
     }
 
@@ -128,7 +155,7 @@ struct InputView: View {
                 .frame(minHeight: 48)
 
                 HStack(spacing: 8) {
-                    leftView
+                    editorialLeadingView
                         .frame(width: 44, height: 44)
 
                     if let agentInputAccessory {
@@ -161,6 +188,28 @@ struct InputView: View {
             }
             .frameGetter($inputBarFrame)
             .padding(MessageView.horizontalScreenEdgePadding, 8)
+        }
+    }
+
+    @ViewBuilder
+    private var editorialLeadingView: some View {
+        if [.waitingForRecordingPermission, .isRecordingTap, .isRecordingHold, .hasRecording, .playingRecording, .pausedRecording].contains(state) {
+            deleteRecordButton
+        } else if hasAttachmentActions {
+            Button {
+                globalFocusState.focus = nil
+                showAttachmentActions = true
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(theme.colors.mainText)
+                    .frame(width: 44, height: 44)
+                    .background(Circle().fill(theme.colors.mainText.opacity(0.06)))
+            }
+            .disabled(!viewModel.inputEnabled || viewModel.isCommitting)
+            .accessibilityLabel(localization.addToConversationText)
+        } else {
+            Color.clear.frame(width: 44, height: 44)
         }
     }
 

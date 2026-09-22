@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Photos
 import PhotosUI
 import GiphyUISDK
 import ExyteMediaPicker
@@ -107,7 +108,14 @@ public struct ChatView<MessageContent: View, InputViewContent: View, MenuAction:
     /// the system picker only handles photo/video library browsing, not camera capture,
     /// so camera requests always fall through to the ExyteMediaPicker
     private var useSystemPhotoPicker: Bool {
-        inputViewCustomizationParameters.photoPickerBackend == .system && inputViewModel.mediaPickerMode == .photos
+        guard inputViewModel.mediaPickerMode == .photos else { return false }
+        if inputViewCustomizationParameters.photoPickerBackend == .system {
+            return true
+        }
+        let layout = inputViewCustomizationParameters.inputLayout ?? theme.style.inputLayout
+        guard layout == .editorial else { return false }
+        let authorization = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        return authorization != .authorized && authorization != .limited
     }
 
     private var customMediaPickerBinding: Binding<Bool> {
