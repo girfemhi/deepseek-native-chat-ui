@@ -195,6 +195,124 @@ final class AgentComposerTests: XCTestCase {
         XCTAssertTrue(snapshots.contains { $0.text == "tail before discard" })
     }
 
+    func testUnmountThenResetCanRetainOwnedRecordingUntilDurableCopyCompletes() async throws {
+        let recorder = SuspendedRecordingService()
+        let state = ChatComposerState(inputViewModel: InputViewModel(recorder: recorder))
+        let model = state.inputViewModel
+        let mountID = UUID()
+        let ownedURL = RecordingFileStore.makeURL(fileExtension: ".m4a")
+        let expectedData = Data("durable recording bytes".utf8)
+        try expectedData.write(to: ownedURL)
+        model.onStart(mountID: mountID)
+
+        model.inputViewAction()(.recordAudioTap)
+        await waitUntilAsync { await recorder.hasPendingStart }
+        await recorder.releaseStart(with: ownedURL)
+        await waitUntil { model.attachments.recording?.url == ownedURL }
+
+        model.onStop(mountID: mountID)
+        let finalization = await state.finalizeForUnmount()
+        XCTAssertEqual(finalization.savedDraft?.recording?.url, ownedURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: ownedURL.path))
+
+        let copiedData = try Data(contentsOf: ownedURL)
+        XCTAssertEqual(copiedData, expectedData)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: ownedURL.path))
+
+        state.discard(deleteOwnedRecordings: false)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: ownedURL.path))
+        await state.releaseOwnedRecordings()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ownedURL.path))
+    }
+
+    func testFinalizeUnmountReturnsNilForAlreadyPublishedUnchangedDraft() async {
+        let state = ChatComposerState()
+        let model = state.inputViewModel
+        model.onDraftChange = { _ in }
+        model.onStart()
+        model.text = "already persisted"
+        state.checkpoint()
+
+        let finalization = await state.finalizeForUnmount()
+
+        XCTAssertTrue(finalization.isNoChange)
+    }
+
+    func testFinalizeUnmountReturnsPendingTextWithoutDependingOnCallback() async {
+        let state = ChatComposerState()
+        let model = state.inputViewModel
+        model.onStart()
+        model.text = "pending tail"
+
+        let finalization = await state.finalizeForUnmount()
+
+        XCTAssertEqual(finalization.savedDraft?.text, "pending tail")
+    }
+
+    func testHostCanConsumeAutomaticUnmountRecordingSnapshotAfterCallbackRan() async throws {
+        let recorder = SuspendedRecordingService()
+        let state = ChatComposerState(inputViewModel: InputViewModel(recorder: recorder))
+        let model = state.inputViewModel
+        let mountID = UUID()
+        let ownedURL = RecordingFileStore.makeURL(fileExtension: ".m4a")
+        try Data("final bytes".utf8).write(to: ownedURL)
+        var callbackSnapshots: [DraftMessage] = []
+        model.onDraftChange = { callbackSnapshots.append($0) }
+        model.onStart(mountID: mountID)
+
+        model.inputViewAction()(.recordAudioTap)
+        await waitUntilAsync { await recorder.hasPendingStart }
+        await recorder.releaseStart(with: ownedURL)
+        await waitUntil { model.attachments.recording?.url == ownedURL }
+
+        model.onStop(mountID: mountID)
+        await waitUntilAsync { !(await recorder.isRecording) }
+        await waitUntil { callbackSnapshots.last?.recording?.url == ownedURL }
+        let directFinalization = await state.finalizeForUnmount()
+
+        XCTAssertEqual(directFinalization.savedDraft?.recording?.url, ownedURL)
+        XCTAssertEqual(try Data(contentsOf: ownedURL), Data("final bytes".utf8))
+
+        state.discard()
+        await waitUntil { !FileManager.default.fileExists(atPath: ownedURL.path) }
+    }
+
+    func testHostCanConsumeSameUnmountTextSnapshotAfterCallbackWasIgnored() async {
+        let state = ChatComposerState()
+        let model = state.inputViewModel
+        let mountID = UUID()
+        var callbackSnapshot: DraftMessage?
+        model.onDraftChange = { callbackSnapshot = $0 }
+        model.onStart(mountID: mountID)
+        model.text = "tail callback intentionally ignored by host"
+
+        model.onStop(mountID: mountID)
+        await waitUntil { callbackSnapshot != nil }
+        let directFinalization = await state.finalizeForUnmount()
+
+        XCTAssertEqual(directFinalization.savedDraft?.id, callbackSnapshot?.id)
+        XCTAssertEqual(directFinalization.savedDraft?.createdAt, callbackSnapshot?.createdAt)
+        XCTAssertEqual(directFinalization.savedDraft?.text, callbackSnapshot?.text)
+    }
+
+    func testHostCanConsumeRemoveEmptyWhenUnmountCallbackWasIgnored() async {
+        let state = ChatComposerState()
+        let model = state.inputViewModel
+        let mountID = UUID()
+        var callbacks: [DraftMessage] = []
+        model.onDraftChange = { callbacks.append($0) }
+        model.onStart(mountID: mountID)
+        model.text = "persisted first"
+        state.checkpoint()
+        model.text = ""
+
+        model.onStop(mountID: mountID)
+        await waitUntil { callbacks.last?.text == "" }
+        let directFinalization = await state.finalizeForUnmount()
+
+        XCTAssertTrue(directFinalization.isRemoveEmpty)
+    }
+
     func testOldMountStopDoesNotFinalizeRecordingWhileNewMountRemains() async throws {
         let recorder = SuspendedRecordingService()
         let state = ChatComposerState(inputViewModel: InputViewModel(recorder: recorder))
@@ -803,6 +921,23 @@ private struct TestMediaSource: MediaModelProtocol {
     func getThumbnailURL() async -> URL? { url }
     func getData() async throws -> Data? { nil }
     func getThumbnailData() async -> Data? { nil }
+}
+
+private extension ChatComposerFinalization {
+    var savedDraft: DraftMessage? {
+        if case .save(let draft) = self { return draft }
+        return nil
+    }
+
+    var isNoChange: Bool {
+        if case .noChange = self { return true }
+        return false
+    }
+
+    var isRemoveEmpty: Bool {
+        if case .removeEmpty = self { return true }
+        return false
+    }
 }
 
 @MainActor

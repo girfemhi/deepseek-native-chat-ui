@@ -1,5 +1,14 @@
 import Foundation
 
+public enum ChatComposerFinalization: Sendable {
+    /// No unpublished composer mutation remains.
+    case noChange
+    /// Persist or replace the scoped draft with this snapshot.
+    case save(DraftMessage)
+    /// Remove the persisted draft for this scope.
+    case removeEmpty
+}
+
 /// Stable ownership for one conversation's composer.
 ///
 /// Cache one state per account/conversation scope and pass it back when the
@@ -19,8 +28,8 @@ public final class ChatComposerState {
 
     /// Cancels the SDK's pending submit task, stops recording and clears only
     /// ExyteChat-owned temporary recording files and in-memory draft state.
-    public func discard() {
-        inputViewModel.discard()
+    public func discard(deleteOwnedRecordings: Bool = true) {
+        inputViewModel.discard(deleteOwnedRecordings: deleteOwnedRecordings)
     }
 
     /// Immediately publishes the current draft snapshot without waiting for
@@ -34,5 +43,20 @@ public final class ChatComposerState {
     /// and the resulting draft is synchronously checkpointed.
     public func checkpointForBackground() async {
         await inputViewModel.checkpointForBackground()
+    }
+
+    /// Stops any SDK recording and returns an explicit save/remove/no-change
+    /// result before a scope is reset or handed to durable storage. If the last
+    /// mount already started finalization, this awaits and consumes that same
+    /// result rather than relying on a possibly generation-gated callback.
+    public func finalizeForUnmount() async -> ChatComposerFinalization {
+        await inputViewModel.finalizeForUnmount()
+    }
+
+    /// Deletes SDK-owned temporary recordings retained by
+    /// `discard(deleteOwnedRecordings: false)` after the host has durably copied
+    /// them. Documents and Photos library URLs are never included.
+    public func releaseOwnedRecordings() async {
+        await inputViewModel.releaseOwnedRecordings()
     }
 }

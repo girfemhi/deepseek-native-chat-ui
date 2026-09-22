@@ -11,10 +11,16 @@ import SwiftUI
 final class InputViewModel: ObservableObject {
 
     @Published var text = "" {
-        didSet { textRevision += 1 }
+        didSet {
+            textRevision += 1
+            draftRevision += 1
+        }
     }
     @Published var attachments = InputViewAttachments() {
-        didSet { attachmentRevision += 1 }
+        didSet {
+            attachmentRevision += 1
+            draftRevision += 1
+        }
     }
     @Published var state: InputViewState = .empty
 
@@ -58,6 +64,9 @@ final class InputViewModel: ObservableObject {
     private var recordingStartTask: Task<Void, Never>?
     private var recordingGeneration = 0
     private var recordingToken: UUID?
+    private var retainedOwnedRecordingURLs: Set<URL> = []
+    private var recordingStopTask: Task<Void, Never>?
+    private var unmountFinalizationTask: Task<ChatComposerFinalization, Never>?
     private let legacyMountID = UUID()
     private var activeMountIDs: Set<UUID> = []
 
@@ -80,6 +89,7 @@ final class InputViewModel: ObservableObject {
 
     func onStart(mountID: UUID) {
         guard activeMountIDs.insert(mountID).inserted else { return }
+        unmountFinalizationTask = nil
         guard subscriptions.isEmpty else { return }
         isRestoringInitialDraft = true
         subscribeValidation()
@@ -99,11 +109,15 @@ final class InputViewModel: ObservableObject {
             flushDraftChange()
             return
         }
-        checkpoint()
+        let tailFinalization = finalization(for: checkpoint())
         subscriptions.removeAll()
-        Task { @MainActor [weak self] in
-            guard let self, activeMountIDs.isEmpty else { return }
-            await checkpointForBackground()
+        unmountFinalizationTask = Task { @MainActor [weak self] in
+            guard let self, activeMountIDs.isEmpty else { return .noChange }
+            let finalization = await finalizeUnmountSnapshot(publishToCallback: true)
+            if case .noChange = finalization {
+                return tailFinalization
+            }
+            return finalization
         }
     }
 
@@ -131,11 +145,12 @@ final class InputViewModel: ObservableObject {
         }
     }
 
-    func discard() {
+    func discard(deleteOwnedRecordings: Bool = true) {
         let ownedRecordingURLs = Set([
             attachments.recording?.url,
             pendingDraft?.recording?.url
         ].compactMap { $0 }.filter(RecordingFileStore.isOwned))
+            .union(retainedOwnedRecordingURLs)
 
         submissionEpoch += 1
         submissionTask?.cancel()
@@ -153,20 +168,94 @@ final class InputViewModel: ObservableObject {
         draftCreatedAt = nil
         lastPublishedDraftRevision = draftRevision
 
-        Task {
+        if deleteOwnedRecordings {
+            retainedOwnedRecordingURLs.removeAll()
+        } else {
+            retainedOwnedRecordingURLs.formUnion(ownedRecordingURLs)
+        }
+
+        recordingStopTask = Task {
             await recorder.stopRecording(token: recordingToken)
             await recordingPlayer?.reset()
-            ownedRecordingURLs.forEach(RecordingFileStore.deleteIfOwned)
+            if deleteOwnedRecordings {
+                ownedRecordingURLs.forEach(RecordingFileStore.deleteIfOwned)
+            }
         }
     }
 
-    func checkpoint() {
+    func releaseOwnedRecordings() async {
+        if let recordingStopTask {
+            await recordingStopTask.value
+        }
+        let urls = retainedOwnedRecordingURLs
+        retainedOwnedRecordingURLs.removeAll()
+        urls.forEach(RecordingFileStore.deleteIfOwned)
+    }
+
+    @discardableResult
+    func checkpoint() -> DraftMessage? {
         draftChangeTask?.cancel()
         draftChangeTask = nil
-        flushDraftChange()
+        return flushDraftChange()
     }
 
     func checkpointForBackground() async {
+        await stopRecordingForSuspension()
+        checkpoint()
+    }
+
+    func finalizeForUnmount() async -> ChatComposerFinalization {
+        if let unmountFinalizationTask {
+            let finalization = await unmountFinalizationTask.value
+            self.unmountFinalizationTask = nil
+            return finalization
+        }
+        return await finalizeUnmountSnapshot(publishToCallback: false)
+    }
+
+    private func finalizeUnmountSnapshot(
+        publishToCallback: Bool
+    ) async -> ChatComposerFinalization {
+        draftChangeTask?.cancel()
+        draftChangeTask = nil
+        await stopRecordingForSuspension()
+
+        guard draftRevision != lastPublishedDraftRevision else { return .noChange }
+        let hasContent = hasDraftContent
+        guard hasContent || draftID != nil || draftCreatedAt != nil else {
+            lastPublishedDraftRevision = draftRevision
+            return .noChange
+        }
+
+        let snapshot = makeDraft(deferred: true)
+        lastPublishedDraftRevision = draftRevision
+        if publishToCallback {
+            onDraftChange?(snapshot)
+        }
+        if !hasContent {
+            draftID = nil
+            draftCreatedAt = nil
+            pendingDraft = nil
+            pendingDraftText = nil
+            pendingAttachmentRevision = nil
+        }
+        return hasContent ? .save(snapshot) : .removeEmpty
+    }
+
+    private func finalization(for snapshot: DraftMessage?) -> ChatComposerFinalization {
+        guard let snapshot else { return .noChange }
+        let hasContent = !snapshot.text.isEmpty
+            || !snapshot.medias.isEmpty
+            || snapshot.giphyMedia != nil
+            || !snapshot.documents.isEmpty
+            || snapshot.staticLocation != nil
+            || snapshot.liveLocation != nil
+            || snapshot.recording != nil
+            || snapshot.replyMessage != nil
+        return hasContent ? .save(snapshot) : .removeEmpty
+    }
+
+    private func stopRecordingForSuspension() async {
         let token = invalidateRecordingStart()
         let generation = recordingGeneration
         let revisionBeforeStop = draftRevision
@@ -176,8 +265,8 @@ final class InputViewModel: ObservableObject {
         await recordingPlayer?.reset()
 
         if generation == recordingGeneration {
-            if attachments.recording?.url == nil {
-                draftContentChanged = attachments.recording != nil
+            if let recording = attachments.recording, recording.url == nil {
+                draftContentChanged = true
                 attachments.recording = nil
                 state = hasDraftContent ? .hasTextOrMedia : .empty
             } else if [.isRecordingTap, .isRecordingHold, .waitingForRecordingPermission].contains(state) {
@@ -191,7 +280,6 @@ final class InputViewModel: ObservableObject {
             // without inventing a revision for an unchanged checkpoint.
             draftRevision += 1
         }
-        checkpoint()
     }
 
     func reset() {
@@ -406,14 +494,12 @@ private extension InputViewModel {
 
     func subscribeValidation() {
         $attachments.sink { [weak self] _ in
-            self?.draftRevision += 1
             self?.validateDraft()
             self?.scheduleDraftChange()
         }
         .store(in: &subscriptions)
 
         $text.sink { [weak self] _ in
-            self?.draftRevision += 1
             self?.validateDraft()
             self?.scheduleDraftChange()
         }
@@ -491,10 +577,11 @@ private extension InputViewModel {
         }
     }
 
-    func flushDraftChange(force: Bool = false) {
+    @discardableResult
+    func flushDraftChange(force: Bool = false) -> DraftMessage? {
         guard !isRestoringInitialDraft,
               (force || draftRevision != lastPublishedDraftRevision),
-              let onDraftChange else { return }
+              let onDraftChange else { return nil }
 
         if force {
             draftChangeTask?.cancel()
@@ -504,7 +591,7 @@ private extension InputViewModel {
         let hasContent = hasDraftContent
         guard hasContent || draftID != nil || draftCreatedAt != nil else {
             lastPublishedDraftRevision = draftRevision
-            return
+            return nil
         }
 
         let snapshot = makeDraft(deferred: true)
@@ -518,6 +605,7 @@ private extension InputViewModel {
             pendingDraftText = nil
             pendingAttachmentRevision = nil
         }
+        return snapshot
     }
 
     func makeDraft(deferred: Bool) -> DraftMessage {
