@@ -95,11 +95,16 @@ final class InputViewModel: ObservableObject {
 
     func onStop(mountID: UUID) {
         guard activeMountIDs.remove(mountID) != nil else { return }
-        flushDraftChange()
-        guard activeMountIDs.isEmpty else { return }
-        draftChangeTask?.cancel()
-        draftChangeTask = nil
+        guard activeMountIDs.isEmpty else {
+            flushDraftChange()
+            return
+        }
+        checkpoint()
         subscriptions.removeAll()
+        Task { @MainActor [weak self] in
+            guard let self, activeMountIDs.isEmpty else { return }
+            await checkpointForBackground()
+        }
     }
 
     func setInputEnabled(_ enabled: Bool) {
@@ -165,6 +170,7 @@ final class InputViewModel: ObservableObject {
         let token = invalidateRecordingStart()
         let generation = recordingGeneration
         let revisionBeforeStop = draftRevision
+        let finalizedActiveRecording = token != nil && attachments.recording?.url != nil
         var draftContentChanged = false
         await recorder.stopRecording(token: token)
         await recordingPlayer?.reset()
@@ -178,10 +184,11 @@ final class InputViewModel: ObservableObject {
                 state = .hasRecording
             }
         }
-        if draftContentChanged, draftRevision == revisionBeforeStop {
+        if (draftContentChanged || finalizedActiveRecording), draftRevision == revisionBeforeStop {
             // A background checkpoint can run after the view has disappeared
             // and its Combine subscriptions were removed. Preserve the real
-            // attachment mutation in that case without inventing a revision.
+            // attachment mutation or recording finalization in that case
+            // without inventing a revision for an unchanged checkpoint.
             draftRevision += 1
         }
         checkpoint()

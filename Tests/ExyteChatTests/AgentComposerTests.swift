@@ -66,6 +66,7 @@ final class AgentComposerTests: XCTestCase {
         model.send()
         await waitUntil { gate.hasSubmission }
         model.onStop()
+        await waitUntil { snapshots.last?.text == "send me" }
         XCTAssertEqual(snapshots.last?.text, "send me")
 
         gate.resolve(true)
@@ -92,6 +93,7 @@ final class AgentComposerTests: XCTestCase {
         await waitUntil { gate.hasSubmission }
         model.text = "next draft"
         model.onStop()
+        await waitUntil { snapshots.last?.text == "next draft" }
         XCTAssertEqual(snapshots.last?.text, "next draft")
 
         gate.resolve(true)
@@ -148,6 +150,78 @@ final class AgentComposerTests: XCTestCase {
         XCTAssertEqual(oldSnapshots.count, 0)
         XCTAssertEqual(newSnapshots.last?.text, "B")
         model.onStop(mountID: newMount)
+    }
+
+    func testLastMountStopFinalizesAndRetainsActiveRecordingDraft() async throws {
+        let recorder = SuspendedRecordingService()
+        let state = ChatComposerState(inputViewModel: InputViewModel(recorder: recorder))
+        let model = state.inputViewModel
+        let mountID = UUID()
+        let ownedURL = RecordingFileStore.makeURL(fileExtension: ".m4a")
+        try Data("recorded".utf8).write(to: ownedURL)
+        var snapshots: [DraftMessage] = []
+        model.onDraftChange = { snapshots.append($0) }
+        model.onStart(mountID: mountID)
+
+        model.inputViewAction()(.recordAudioTap)
+        await waitUntilAsync { await recorder.hasPendingStart }
+        await recorder.releaseStart(with: ownedURL)
+        await waitUntil { model.attachments.recording?.url == ownedURL }
+
+        model.onStop(mountID: mountID)
+        await waitUntilAsync { !(await recorder.isRecording) }
+        await waitUntil { snapshots.last?.recording?.url == ownedURL }
+
+        XCTAssertEqual(model.attachments.recording?.url, ownedURL)
+        XCTAssertEqual(model.state, .hasRecording)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: ownedURL.path))
+
+        state.discard()
+        await waitUntil { !FileManager.default.fileExists(atPath: ownedURL.path) }
+    }
+
+    func testLastMountStopSynchronouslyPublishesTailBeforeImmediateDiscard() {
+        let state = ChatComposerState()
+        let model = state.inputViewModel
+        let mountID = UUID()
+        var snapshots: [DraftMessage] = []
+        model.onDraftChange = { snapshots.append($0) }
+        model.onStart(mountID: mountID)
+        model.text = "tail before discard"
+
+        model.onStop(mountID: mountID)
+        state.discard()
+
+        XCTAssertTrue(snapshots.contains { $0.text == "tail before discard" })
+    }
+
+    func testOldMountStopDoesNotFinalizeRecordingWhileNewMountRemains() async throws {
+        let recorder = SuspendedRecordingService()
+        let state = ChatComposerState(inputViewModel: InputViewModel(recorder: recorder))
+        let model = state.inputViewModel
+        let oldMount = UUID()
+        let newMount = UUID()
+        let ownedURL = RecordingFileStore.makeURL(fileExtension: ".m4a")
+        try Data("recorded".utf8).write(to: ownedURL)
+        model.onStart(mountID: oldMount)
+        model.onStart(mountID: newMount)
+
+        model.inputViewAction()(.recordAudioTap)
+        await waitUntilAsync { await recorder.hasPendingStart }
+        await recorder.releaseStart(with: ownedURL)
+        await waitUntil { model.attachments.recording?.url == ownedURL }
+
+        model.onStop(mountID: oldMount)
+        await Task.yield()
+        let isStillRecording = await recorder.isRecording
+
+        XCTAssertTrue(isStillRecording)
+        XCTAssertEqual(model.attachments.recording?.url, ownedURL)
+
+        model.onStop(mountID: newMount)
+        await waitUntilAsync { !(await recorder.isRecording) }
+        state.discard()
+        await waitUntil { !FileManager.default.fileExists(atPath: ownedURL.path) }
     }
 
     func testDeferredAcknowledgementDoesNotClearABAEdit() async {
