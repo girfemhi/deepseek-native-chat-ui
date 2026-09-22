@@ -23,6 +23,11 @@ enum PastedContentImporter {
     static let maximumItemBytes: Int64 = 1_024 * 1_024 * 1_024
     private static let freeSpaceReserve: Int64 = 32 * 1_024 * 1_024
 
+    private struct StagedFile {
+        let url: URL
+        let sourceFileName: String?
+    }
+
     static func containsAttachment(_ providers: [NSItemProvider]) -> Bool {
         providers.contains { provider in
             provider.registeredTypeIdentifiers.contains { identifier in
@@ -81,7 +86,12 @@ enum PastedContentImporter {
             }
         if let attachmentType,
            let staged = await loadAndStage(item, type: attachmentType),
-           let result = makePayload(url: staged, provider: item.provider, type: attachmentType) {
+           let result = makePayload(
+               url: staged.url,
+               provider: item.provider,
+               type: attachmentType,
+               fallbackFileName: staged.sourceFileName
+           ) {
             return result
         }
 
@@ -91,17 +101,37 @@ enum PastedContentImporter {
         return ImportedPastePayload()
     }
 
-    private static func loadAndStage(_ item: SendableItemProvider, type: UTType) async -> URL? {
+    private static func loadAndStage(_ item: SendableItemProvider, type: UTType) async -> StagedFile? {
         await withCheckedContinuation { continuation in
             item.provider.loadFileRepresentation(forTypeIdentifier: type.identifier) { url, _ in
                 guard let url else {
                     item.provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { data, _ in
                         guard let data else { continuation.resume(returning: nil); return }
-                        continuation.resume(returning: stage(data: data, provider: item.provider, type: type))
+                        if !type.conforms(to: .propertyList),
+                           let source = decodeFileURLRepresentation(data),
+                           (item.provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+                               || (!isGenericRepresentation(type)
+                                   && representationMatchesSource(source, representationType: type))) {
+                            continuation.resume(returning: copyToOwnedStage(source, provider: item.provider, type: type).map {
+                                StagedFile(url: $0, sourceFileName: source.lastPathComponent)
+                            })
+                            return
+                        }
+                        continuation.resume(returning: stage(data: data, provider: item.provider, type: type).map {
+                            StagedFile(url: $0, sourceFileName: nil)
+                        })
                     }
                     return
                 }
-                continuation.resume(returning: copyToOwnedStage(url, provider: item.provider, type: type))
+                // iOS pasteboard may strip the public.file-url declaration while still returning
+                // its exact, private three-field URL wrapper for a specific representation (PDF,
+                // DOCX, and so on). The decoder below validates that narrow schema and verifies the
+                // resolved source against the requested concrete type before following it.
+                let wrappedSource = legacyWrappedFileURL(from: url, representationType: type)
+                let source = wrappedSource ?? url
+                continuation.resume(returning: copyToOwnedStage(source, provider: item.provider, type: type).map {
+                    StagedFile(url: $0, sourceFileName: wrappedSource?.lastPathComponent)
+                })
             }
         }
     }
@@ -145,11 +175,11 @@ enum PastedContentImporter {
     private static func decodeFileURLRepresentation(_ data: Data) -> URL? {
         guard data.count <= 64 * 1_024 else { return nil }
         if data.starts(with: Data("bplist00".utf8)) {
-            guard let value = try? NSKeyedUnarchiver.unarchivedObject(ofClass: NSURL.self, from: data) else {
-                return nil
+            if let value = try? NSKeyedUnarchiver.unarchivedObject(ofClass: NSURL.self, from: data) {
+                let url = value as URL
+                if url.isFileURL { return url }
             }
-            let url = value as URL
-            return url.isFileURL ? url : nil
+            return legacyFileURL(fromPropertyListData: data)
         }
         if let string = String(data: data, encoding: .utf8),
            string.hasPrefix("file://"),
@@ -157,6 +187,57 @@ enum PastedContentImporter {
             return url
         }
         return nil
+    }
+
+    private static func legacyWrappedFileURL(from url: URL, representationType: UTType) -> URL? {
+        guard !representationType.conforms(to: .propertyList),
+              let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true,
+              let size = values.fileSize,
+              size <= 64 * 1_024,
+              let data = try? Data(contentsOf: url),
+              data.starts(with: Data("bplist00".utf8)),
+              let source = legacyFileURL(fromPropertyListData: data),
+              representationMatchesSource(source, representationType: representationType) else { return nil }
+        return source
+    }
+
+    private static func isGenericRepresentation(_ type: UTType) -> Bool {
+        type == .data || type == .item || type == .content || type == .url || type == .fileURL
+    }
+
+    private static func legacyFileURL(fromPropertyListData data: Data) -> URL? {
+        guard data.count <= 64 * 1_024,
+              let root = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+              let values = root as? [Any],
+              values.count == 3,
+              let path = values[0] as? String,
+              path.hasPrefix("file://"),
+              let metadata = values[1] as? String,
+              metadata.isEmpty,
+              let options = values[2] as? [AnyHashable: Any],
+              options.isEmpty,
+              let url = URL(string: path),
+              url.isFileURL else { return nil }
+        return url
+    }
+
+    private static func representationMatchesSource(_ source: URL, representationType: UTType) -> Bool {
+        let accessedSecurityScope = source.startAccessingSecurityScopedResource()
+        defer {
+            if accessedSecurityScope { source.stopAccessingSecurityScopedResource() }
+        }
+        if isGenericRepresentation(representationType) {
+            return true
+        }
+        if representationType == .pdf {
+            guard let handle = try? FileHandle(forReadingFrom: source) else { return false }
+            defer { try? handle.close() }
+            return ((try? handle.read(upToCount: 5)) ?? nil)?.starts(with: Data("%PDF".utf8)) == true
+        }
+        guard !source.pathExtension.isEmpty,
+              let sourceType = UTType(filenameExtension: source.pathExtension) else { return false }
+        return sourceType == representationType || sourceType.conforms(to: representationType)
     }
 
     private static func stageFile(
@@ -171,6 +252,10 @@ enum PastedContentImporter {
     }
 
     private static func copyToOwnedStage(_ source: URL, provider: NSItemProvider, type: UTType?) -> URL? {
+        let accessedSecurityScope = source.startAccessingSecurityScopedResource()
+        defer {
+            if accessedSecurityScope { source.stopAccessingSecurityScopedResource() }
+        }
         guard source.isFileURL,
               let values = try? source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
               values.isRegularFile == true,

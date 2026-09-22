@@ -824,6 +824,107 @@ final class AgentComposerTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: payload.documents[0].0.url), expected)
     }
 
+    func testLegacyThreeItemFileURLWrapperFromGenericFileRepresentationCopiesPDF() async throws {
+        let source = FileManager.tempDirPath.appendingPathComponent("legacy-wrapper-source-\(UUID().uuidString).pdf")
+        let wrapper = FileManager.tempDirPath.appendingPathComponent("legacy-wrapper-\(UUID().uuidString)")
+        let expected = Data("%PDF-legacy-real-bytes".utf8)
+        try expected.write(to: source)
+        let wrapperData = try PropertyListSerialization.data(
+            fromPropertyList: [source.absoluteString, "", [String: String]()],
+            format: .binary,
+            options: 0
+        )
+        try wrapperData.write(to: wrapper)
+        defer {
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: wrapper)
+        }
+        let provider = NSItemProvider()
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier, visibility: .all) { completion in
+            completion(nil, nil)
+            return nil
+        }
+        provider.registerFileRepresentation(
+            forTypeIdentifier: UTType.data.identifier,
+            fileOptions: [],
+            visibility: .all
+        ) { completion in
+            completion(wrapper, true, nil)
+            return nil
+        }
+
+        let payload = await PastedContentImporter.importProviders([
+            SendableItemProvider(index: 0, provider: provider)
+        ])
+        defer { PastedContentImporter.deleteOwned(payload.ownedURLs) }
+
+        XCTAssertEqual(payload.documents.count, 1)
+        XCTAssertEqual(try Data(contentsOf: payload.documents[0].0.url), expected)
+        XCTAssertTrue(try Data(contentsOf: payload.documents[0].0.url).starts(with: Data("%PDF-".utf8)))
+    }
+
+    func testLegacyFileURLWrapperFromGenericDataCallbackCopiesPDF() async throws {
+        let source = FileManager.tempDirPath.appendingPathComponent("legacy-data-source-\(UUID().uuidString).pdf")
+        let expected = Data("%PDF-legacy-data-callback".utf8)
+        try expected.write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let wrapperData = try PropertyListSerialization.data(
+            fromPropertyList: [source.absoluteString, "", [String: String]()],
+            format: .binary,
+            options: 0
+        )
+        let provider = LegacyDataFallbackItemProvider(wrapperData: wrapperData)
+
+        let payload = await PastedContentImporter.importProviders([
+            SendableItemProvider(index: 0, provider: provider)
+        ])
+        defer { PastedContentImporter.deleteOwned(payload.ownedURLs) }
+
+        XCTAssertEqual(payload.documents.count, 1)
+        XCTAssertEqual(try Data(contentsOf: payload.documents[0].0.url), expected)
+        XCTAssertEqual(payload.documents[0].0.fileName, source.lastPathComponent)
+    }
+
+    func testLegacyFileURLWrapperFromSpecificPDFDataCallbackCopiesPDF() async throws {
+        let source = FileManager.tempDirPath.appendingPathComponent("specific-pdf-data-source-\(UUID().uuidString).pdf")
+        let expected = Data("%PDF-specific-data-callback".utf8)
+        try expected.write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let wrapperData = try PropertyListSerialization.data(
+            fromPropertyList: [source.absoluteString, "", [String: String]()],
+            format: .binary,
+            options: 0
+        )
+        let provider = SpecificPDFDataFallbackItemProvider(wrapperData: wrapperData)
+
+        let payload = await PastedContentImporter.importProviders([
+            SendableItemProvider(index: 0, provider: provider)
+        ])
+        defer { PastedContentImporter.deleteOwned(payload.ownedURLs) }
+
+        XCTAssertEqual(payload.documents.count, 1)
+        XCTAssertEqual(try Data(contentsOf: payload.documents[0].0.url), expected)
+        XCTAssertEqual(payload.documents[0].0.fileName, source.lastPathComponent)
+    }
+
+    func testActualPropertyListDocumentIsNotUnwrappedAsFileURLWrapper() async throws {
+        let plistData = try PropertyListSerialization.data(
+            fromPropertyList: ["file:///private/should-not-be-followed.pdf", "", [String: String]()],
+            format: .binary,
+            options: 0
+        )
+        let provider = dataProvider(name: "actual.plist", type: .propertyList, data: plistData)
+
+        let payload = await PastedContentImporter.importProviders([
+            SendableItemProvider(index: 0, provider: provider)
+        ])
+        defer { PastedContentImporter.deleteOwned(payload.ownedURLs) }
+
+        XCTAssertEqual(payload.documents.count, 1)
+        XCTAssertEqual(payload.documents[0].0.fileName, "actual.plist")
+        XCTAssertEqual(try Data(contentsOf: payload.documents[0].0.url), plistData)
+    }
+
     func testPasteDetectionLeavesPlainTextAndLongWebURLToUIKitFallback() {
         let text = NSItemProvider(object: "plain text" as NSString)
         let longURL = NSItemProvider(object: "https://example.com/" + String(repeating: "a", count: 2_000) as NSString)
@@ -1375,5 +1476,89 @@ private final class EphemeralFileURLItemProvider: NSItemProvider {
     ) {
         completionHandler?(source as NSURL, nil)
         try? FileManager.default.removeItem(at: source)
+    }
+}
+
+private final class LegacyDataFallbackItemProvider: NSItemProvider {
+    private let wrapperData: Data
+
+    init(wrapperData: Data) {
+        self.wrapperData = wrapperData
+        super.init()
+    }
+
+    override var registeredTypeIdentifiers: [String] {
+        [UTType.fileURL.identifier, UTType.data.identifier]
+    }
+
+    override func hasItemConformingToTypeIdentifier(_ typeIdentifier: String) -> Bool {
+        typeIdentifier == UTType.fileURL.identifier || typeIdentifier == UTType.data.identifier
+    }
+
+    override func loadItem(
+        forTypeIdentifier typeIdentifier: String,
+        options: [AnyHashable: Any]? = nil,
+        completionHandler: NSItemProvider.CompletionHandler? = nil
+    ) {
+        completionHandler?(nil, nil)
+    }
+
+    override func loadFileRepresentation(
+        forTypeIdentifier typeIdentifier: String,
+        completionHandler: @escaping @Sendable (URL?, Error?) -> Void
+    ) -> Progress {
+        completionHandler(nil, nil)
+        return completedProgress()
+    }
+
+    override func loadDataRepresentation(
+        forTypeIdentifier typeIdentifier: String,
+        completionHandler: @escaping (Data?, Error?) -> Void
+    ) -> Progress {
+        completionHandler(typeIdentifier == UTType.data.identifier ? wrapperData : nil, nil)
+        return completedProgress()
+    }
+
+    private func completedProgress() -> Progress {
+        let progress = Progress(totalUnitCount: 1)
+        progress.completedUnitCount = 1
+        return progress
+    }
+}
+
+private final class SpecificPDFDataFallbackItemProvider: NSItemProvider {
+    private let wrapperData: Data
+
+    init(wrapperData: Data) {
+        self.wrapperData = wrapperData
+        super.init()
+    }
+
+    override var registeredTypeIdentifiers: [String] { [UTType.pdf.identifier] }
+
+    override func hasItemConformingToTypeIdentifier(_ typeIdentifier: String) -> Bool {
+        typeIdentifier == UTType.pdf.identifier
+    }
+
+    override func loadFileRepresentation(
+        forTypeIdentifier typeIdentifier: String,
+        completionHandler: @escaping @Sendable (URL?, Error?) -> Void
+    ) -> Progress {
+        completionHandler(nil, nil)
+        return completedProgress()
+    }
+
+    override func loadDataRepresentation(
+        forTypeIdentifier typeIdentifier: String,
+        completionHandler: @escaping (Data?, Error?) -> Void
+    ) -> Progress {
+        completionHandler(typeIdentifier == UTType.pdf.identifier ? wrapperData : nil, nil)
+        return completedProgress()
+    }
+
+    private func completedProgress() -> Progress {
+        let progress = Progress(totalUnitCount: 1)
+        progress.completedUnitCount = 1
+        return progress
     }
 }
