@@ -602,7 +602,7 @@ final class AgentComposerTests: XCTestCase {
         XCTAssertEqual(notificationCount, 0)
     }
 
-    func testCheckpointImmediatelyPublishesLatestTextWithoutDebounceDelay() {
+    func testCheckpointImmediatelyPublishesPendingDebounceWithLatestText() {
         let state = ChatComposerState()
         let model = state.inputViewModel
         var snapshots: [DraftMessage] = []
@@ -614,6 +614,22 @@ final class AgentComposerTests: XCTestCase {
 
         XCTAssertEqual(snapshots.count, 1)
         XCTAssertEqual(snapshots.last?.text, "latest text")
+    }
+
+    func testCheckpointWithoutChangesDoesNotRepublishDraft() {
+        let state = ChatComposerState()
+        let model = state.inputViewModel
+        var snapshots: [DraftMessage] = []
+        model.onDraftChange = { snapshots.append($0) }
+        model.onStart()
+        model.text = "one revision"
+        state.checkpoint()
+        XCTAssertEqual(snapshots.count, 1)
+
+        state.checkpoint()
+
+        XCTAssertEqual(snapshots.count, 1)
+        XCTAssertEqual(snapshots.last?.text, "one revision")
     }
 
     func testBackgroundCheckpointCancelsPendingRecordingPermissionWithoutDisablingInput() async throws {

@@ -156,24 +156,35 @@ final class InputViewModel: ObservableObject {
     }
 
     func checkpoint() {
-        flushDraftChange(force: true)
+        draftChangeTask?.cancel()
+        draftChangeTask = nil
+        flushDraftChange()
     }
 
     func checkpointForBackground() async {
         let token = invalidateRecordingStart()
         let generation = recordingGeneration
+        let revisionBeforeStop = draftRevision
+        var draftContentChanged = false
         await recorder.stopRecording(token: token)
         await recordingPlayer?.reset()
 
         if generation == recordingGeneration {
             if attachments.recording?.url == nil {
+                draftContentChanged = attachments.recording != nil
                 attachments.recording = nil
                 state = hasDraftContent ? .hasTextOrMedia : .empty
             } else if [.isRecordingTap, .isRecordingHold, .waitingForRecordingPermission].contains(state) {
                 state = .hasRecording
             }
         }
-        flushDraftChange(force: true)
+        if draftContentChanged, draftRevision == revisionBeforeStop {
+            // A background checkpoint can run after the view has disappeared
+            // and its Combine subscriptions were removed. Preserve the real
+            // attachment mutation in that case without inventing a revision.
+            draftRevision += 1
+        }
+        checkpoint()
     }
 
     func reset() {
