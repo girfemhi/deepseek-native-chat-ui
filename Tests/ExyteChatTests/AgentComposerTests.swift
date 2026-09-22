@@ -602,6 +602,67 @@ final class AgentComposerTests: XCTestCase {
         XCTAssertEqual(notificationCount, 0)
     }
 
+    func testCheckpointImmediatelyPublishesLatestTextWithoutDebounceDelay() {
+        let state = ChatComposerState()
+        let model = state.inputViewModel
+        var snapshots: [DraftMessage] = []
+        model.onDraftChange = { snapshots.append($0) }
+        model.onStart()
+        model.text = "latest text"
+
+        state.checkpoint()
+
+        XCTAssertEqual(snapshots.count, 1)
+        XCTAssertEqual(snapshots.last?.text, "latest text")
+    }
+
+    func testBackgroundCheckpointCancelsPendingRecordingPermissionWithoutDisablingInput() async throws {
+        let recorder = SuspendedRecordingService()
+        let state = ChatComposerState(inputViewModel: InputViewModel(recorder: recorder))
+        let model = state.inputViewModel
+        let ownedURL = RecordingFileStore.makeURL(fileExtension: ".m4a")
+        try Data("pending".utf8).write(to: ownedURL)
+
+        model.inputViewAction()(.recordAudioTap)
+        await waitUntilAsync { await recorder.hasPendingStart }
+        await state.checkpointForBackground()
+        await recorder.releaseStart(with: ownedURL)
+        await waitUntil { !FileManager.default.fileExists(atPath: ownedURL.path) }
+        let isRecording = await recorder.isRecording
+
+        XCTAssertTrue(model.inputEnabled)
+        XCTAssertNil(model.attachments.recording)
+        XCTAssertFalse(isRecording)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ownedURL.path))
+    }
+
+    func testBackgroundCheckpointStopsAndRetainsActiveRecordingThenPublishesIt() async throws {
+        let recorder = SuspendedRecordingService()
+        let state = ChatComposerState(inputViewModel: InputViewModel(recorder: recorder))
+        let model = state.inputViewModel
+        let ownedURL = RecordingFileStore.makeURL(fileExtension: ".m4a")
+        try Data("recorded".utf8).write(to: ownedURL)
+        var snapshots: [DraftMessage] = []
+        model.onDraftChange = { snapshots.append($0) }
+        model.onStart()
+
+        model.inputViewAction()(.recordAudioTap)
+        await waitUntilAsync { await recorder.hasPendingStart }
+        await recorder.releaseStart(with: ownedURL)
+        await waitUntil { model.attachments.recording?.url == ownedURL }
+        await state.checkpointForBackground()
+        let isRecording = await recorder.isRecording
+
+        XCTAssertTrue(model.inputEnabled)
+        XCTAssertEqual(model.attachments.recording?.url, ownedURL)
+        XCTAssertEqual(model.state, .hasRecording)
+        XCTAssertEqual(snapshots.last?.recording?.url, ownedURL)
+        XCTAssertFalse(isRecording)
+
+        state.discard()
+        await waitUntil { !FileManager.default.fileExists(atPath: ownedURL.path) }
+    }
+
     private func assertRGBA(
         _ color: UIColor,
         _ red: CGFloat,

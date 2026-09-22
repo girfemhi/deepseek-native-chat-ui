@@ -155,6 +155,27 @@ final class InputViewModel: ObservableObject {
         }
     }
 
+    func checkpoint() {
+        flushDraftChange(force: true)
+    }
+
+    func checkpointForBackground() async {
+        let token = invalidateRecordingStart()
+        let generation = recordingGeneration
+        await recorder.stopRecording(token: token)
+        await recordingPlayer?.reset()
+
+        if generation == recordingGeneration {
+            if attachments.recording?.url == nil {
+                attachments.recording = nil
+                state = hasDraftContent ? .hasTextOrMedia : .empty
+            } else if [.isRecordingTap, .isRecordingHold, .waitingForRecordingPermission].contains(state) {
+                state = .hasRecording
+            }
+        }
+        flushDraftChange(force: true)
+    }
+
     func reset() {
         text = ""
         attachments = InputViewAttachments()

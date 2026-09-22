@@ -22,4 +22,17 @@ public final class ChatComposerState {
     public func discard() {
         inputViewModel.discard()
     }
+
+    /// Immediately publishes the current draft snapshot without waiting for
+    /// the normal debounce window.
+    public func checkpoint() {
+        inputViewModel.checkpoint()
+    }
+
+    /// Prepares the composer for background suspension. Pending permission
+    /// requests are invalidated, active SDK recording is stopped and retained,
+    /// and the resulting draft is synchronously checkpointed.
+    public func checkpointForBackground() async {
+        await inputViewModel.checkpointForBackground()
+    }
 }
