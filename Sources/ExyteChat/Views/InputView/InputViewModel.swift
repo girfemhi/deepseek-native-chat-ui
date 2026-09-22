@@ -330,10 +330,15 @@ private extension InputViewModel {
         }
     }
 
-    func flushDraftChange() {
+    func flushDraftChange(force: Bool = false) {
         guard !isRestoringInitialDraft,
-              draftRevision != lastPublishedDraftRevision,
+              (force || draftRevision != lastPublishedDraftRevision),
               let onDraftChange else { return }
+
+        if force {
+            draftChangeTask?.cancel()
+            draftChangeTask = nil
+        }
 
         let hasContent = hasDraftContent
         guard hasContent || draftID != nil || draftCreatedAt != nil else {
@@ -417,10 +422,14 @@ private extension InputViewModel {
                     attachments = InputViewAttachments()
                 }
                 state = hasDraftContent ? .hasTextOrMedia : .empty
-                didCommitMessage?(draft)
                 pendingDraft = nil
                 pendingDraftText = nil
                 pendingAttachmentRevision = nil
+                // A view may disappear while the host is awaiting ACK. Its
+                // Combine subscriptions are then gone, so publish the final
+                // state explicitly rather than relying on @Published sinks.
+                flushDraftChange(force: true)
+                didCommitMessage?(draft)
             } else {
                 pendingDraft = draft
                 pendingDraftText = draft.text

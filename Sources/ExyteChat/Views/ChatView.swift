@@ -312,7 +312,7 @@ public struct ChatView<MessageContent: View, InputViewContent: View, MenuAction:
                 .frame(height: 1)
             HStack {
                 Spacer()
-                Image("waiting", bundle: .current)
+                ChatPortableImages.image("waiting", fallback: "wifi.exclamationmark")
                 Text(chatCustomizationParameters.localization.waitingForNetwork)
                 Spacer()
             }

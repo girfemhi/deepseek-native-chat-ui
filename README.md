@@ -711,6 +711,28 @@ To try the Chat examples:
 
 ## Installation
 
+### Portable SwiftPM resources
+
+This fork retains Exyte's original MIT-licensed asset catalog as the visual
+source of truth but excludes it from SwiftPM compilation. The reproducible
+`Tools/generate_portable_resources.swift` utility uses CoreGraphics to rasterize
+PDF vectors at 1x, 2x and 3x, copies original PNGs unchanged, and generates
+equivalent dynamic light/dark Swift colors. The package processes only the
+portable directory, avoiding an `actool` dependency on simulator runtimes.
+
+```sh
+xcrun swift Tools/generate_portable_resources.swift \
+  Sources/ExyteChat/Resources/Media.xcassets \
+  Sources/ExyteChat/PortableResources \
+  Sources/ExyteChat/Theme/ChatPortableColors.generated.swift \
+  ChatPortableColors
+```
+
+Asset-backed theme images load from the SwiftPM bundle and fall back to the
+closest SF Symbol only when a generated file is missing. The original SVG
+delivery/read symbols use SF Symbol checkmarks because CoreGraphics does not
+parse SVG input.
+
 ### [Swift Package Manager](https://swift.org/package-manager/)
 
 ```swift

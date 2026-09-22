@@ -151,33 +151,33 @@ public struct ChatTheme: Sendable {
         public var recordDot: Color
 
         public init(
-            mainBG: Color = Color("mainBG", bundle: .current),
-            mainTint: Color = Color("inputPlaceholderText", bundle: .current),
-            mainText: Color = Color("mainText", bundle: .current),
-            mainCaptionText: Color = Color("mainCaptionText", bundle: .current),
-            messageMyBG: Color = Color("messageMyBG", bundle: .current),
-            messageReadStatus: Color = Color("messageReadStatus", bundle: .current),
+            mainBG: Color = ChatPortableColors.mainBG,
+            mainTint: Color = ChatPortableColors.inputPlaceholderText,
+            mainText: Color = ChatPortableColors.mainText,
+            mainCaptionText: Color = ChatPortableColors.mainCaptionText,
+            messageMyBG: Color = ChatPortableColors.messageMyBG,
+            messageReadStatus: Color = ChatPortableColors.messageReadStatus,
             messageMyText: Color = Color.white,
-            messageMyTimeText: Color = Color("messageMyTimeText", bundle: .current),
-            messageFriendBG: Color = Color("messageFriendBG", bundle: .current),
-            messageFriendText: Color = Color("mainText", bundle: .current),
-            messageFriendTimeText: Color = Color("messageFriendTimeText", bundle: .current),
-            messageSystemBG: Color = Color("messageFriendBG", bundle: .current),
-            messageSystemText: Color = Color("mainText", bundle: .current),
-            messageSystemTimeText: Color = Color("messageFriendTimeText", bundle: .current),
-            inputBG: Color = Color("inputBG", bundle: .current),
-            inputText: Color = Color("mainText", bundle: .current),
-            inputPlaceholderText: Color = Color("inputPlaceholderText", bundle: .current),
-            inputSignatureBG: Color = Color("inputBG", bundle: .current),
-            inputSignatureText: Color = Color("mainText", bundle: .current),
-            inputSignaturePlaceholderText: Color = Color("inputPlaceholderText", bundle: .current),
-            menuBG: Color = Color("menuBG", bundle: .current),
-            menuText: Color = Color("menuText", bundle: .current),
-            menuTextDelete: Color = Color("menuTextDelete", bundle: .current),
-            statusError: Color = Color("statusError", bundle: .current),
-            statusGray: Color = Color("statusGray", bundle: .current),
-            sendButtonBackground: Color = Color("messageMyBG", bundle: .current),
-            recordDot: Color = Color("menuTextDelete", bundle: .current)
+            messageMyTimeText: Color = ChatPortableColors.messageMyTimeText,
+            messageFriendBG: Color = ChatPortableColors.messageFriendBG,
+            messageFriendText: Color = ChatPortableColors.mainText,
+            messageFriendTimeText: Color = ChatPortableColors.messageFriendTimeText,
+            messageSystemBG: Color = ChatPortableColors.messageFriendBG,
+            messageSystemText: Color = ChatPortableColors.mainText,
+            messageSystemTimeText: Color = ChatPortableColors.messageFriendTimeText,
+            inputBG: Color = ChatPortableColors.inputBG,
+            inputText: Color = ChatPortableColors.mainText,
+            inputPlaceholderText: Color = ChatPortableColors.inputPlaceholderText,
+            inputSignatureBG: Color = ChatPortableColors.inputBG,
+            inputSignatureText: Color = ChatPortableColors.mainText,
+            inputSignaturePlaceholderText: Color = ChatPortableColors.inputPlaceholderText,
+            menuBG: Color = ChatPortableColors.menuBG,
+            menuText: Color = ChatPortableColors.menuText,
+            menuTextDelete: Color = ChatPortableColors.menuTextDelete,
+            statusError: Color = ChatPortableColors.statusError,
+            statusGray: Color = ChatPortableColors.statusGray,
+            sendButtonBackground: Color = ChatPortableColors.messageMyBG,
+            recordDot: Color = ChatPortableColors.menuTextDelete
         ) {
             self.mainBG = mainBG
             self.mainTint = mainTint
@@ -410,29 +410,29 @@ public struct ChatTheme: Sendable {
             scrollToBottom: Image? = nil,
             background: Background? = nil
         ) {
-            self.backButton = backButton ?? Image("backArrow", bundle: .current)
+            self.backButton = backButton ?? ChatPortableImages.image("backArrow", fallback: "chevron.left", template: true)
             self.scrollToBottom = scrollToBottom ?? Image(systemName: "chevron.down")
             
             self.background = background
 
             self.attachMenu = AttachMenu(
-                camera: camera ?? Image("camera", bundle: .current),
-                contact: contact ?? Image("contact", bundle: .current),
-                document: document ?? Image("document", bundle: .current),
-                location: location ?? Image("location", bundle: .current),
-                photo: photo ?? Image("photo", bundle: .current),
-                pickDocument: pickDocument ?? Image("pickDocument", bundle: .current),
-                pickLocation: pickLocation ?? Image("pickLocation", bundle: .current),
-                pickPhoto: pickPhoto ?? Image("pickPhoto", bundle: .current)
+                camera: camera ?? ChatPortableImages.image("camera", fallback: "camera.fill"),
+                contact: contact ?? ChatPortableImages.image("contact", fallback: "person.crop.circle"),
+                document: document ?? ChatPortableImages.image("document", fallback: "doc.fill"),
+                location: location ?? ChatPortableImages.image("location", fallback: "location.fill"),
+                photo: photo ?? ChatPortableImages.image("photo", fallback: "photo.fill"),
+                pickDocument: pickDocument ?? ChatPortableImages.image("pickDocument", fallback: "doc"),
+                pickLocation: pickLocation ?? ChatPortableImages.image("pickLocation", fallback: "location"),
+                pickPhoto: pickPhoto ?? ChatPortableImages.image("pickPhoto", fallback: "photo")
             )
 
             self.inputView = InputView(
-                add: add ?? Image("add", bundle: .current),
-                arrowSend: arrowSend ?? Image("arrowSend", bundle: .current),
-                sticker: sticker ?? Image("sticker", bundle: .current),
-                attach: attach ?? Image("attach", bundle: .current),
-                attachCamera: attachCamera ?? Image("attachCamera", bundle: .current),
-                microphone: microphone ?? Image("microphone", bundle: .current),
+                add: add ?? ChatPortableImages.image("add", fallback: "plus"),
+                arrowSend: arrowSend ?? ChatPortableImages.image("arrowSend", fallback: "arrow.up"),
+                sticker: sticker ?? ChatPortableImages.image("sticker", fallback: "face.smiling"),
+                attach: attach ?? ChatPortableImages.image("attach", fallback: "paperclip"),
+                attachCamera: attachCamera ?? ChatPortableImages.image("attachCamera", fallback: "camera"),
+                microphone: microphone ?? ChatPortableImages.image("microphone", fallback: "mic.fill"),
                 clearText: clearText ?? Image(systemName: "xmark.circle.fill")
             )
 
@@ -445,43 +445,43 @@ public struct ChatTheme: Sendable {
             )
 
             self.mediaPicker = MediaPicker(
-                chevronDown: chevronDown ?? Image("chevronDown", bundle: .current),
-                chevronRight: chevronRight ?? Image("chevronRight", bundle: .current),
+                chevronDown: chevronDown ?? ChatPortableImages.image("chevronDown", fallback: "chevron.down"),
+                chevronRight: chevronRight ?? ChatPortableImages.image("chevronRight", fallback: "chevron.right"),
                 cross: cross ?? Image(systemName: "xmark")
             )
 
             self.message = Message(
-                attachedDocument: attachedDocument ?? Image("attachedDocument", bundle: .current),
+                attachedDocument: attachedDocument ?? ChatPortableImages.image("attachedDocument", fallback: "doc.fill"),
                 cancel: cancel ?? Image(systemName: "xmark.circle.fill"),
                 error: error ?? Image(systemName: "exclamationmark.circle.fill"),
-                muteVideo: muteVideo ?? Image("muteVideo", bundle: .current),
-                pauseAudio: pauseAudio ?? Image("pauseAudio", bundle: .current),
+                muteVideo: muteVideo ?? ChatPortableImages.image("MuteVideo", fallback: "speaker.slash.fill"),
+                pauseAudio: pauseAudio ?? ChatPortableImages.image("pauseAudio", fallback: "pause.fill"),
                 pauseVideo: pauseVideo ?? Image(systemName: "pause.circle.fill"),
-                playAudio: playAudio ?? Image("playAudio", bundle: .current),
+                playAudio: playAudio ?? ChatPortableImages.image("playAudio", fallback: "play.fill"),
                 playVideo: playVideo ?? Image(systemName: "play.circle.fill"),
-                read: read ?? Image(uiImage: UIImage(named: "checkAll", in: .current, with: nil)!),
+                read: read ?? Image(systemName: "checkmark"),
                 sending: sending ?? Image(systemName: "clock"),
-                delivered: delivered ?? Image(uiImage: UIImage(named: "checkAll", in: .current, with: nil)!),
-                sent: sent ?? Image(uiImage: UIImage(named: "check", in: .current, with: nil)!)
+                delivered: delivered ?? Image(systemName: "checkmark"),
+                sent: sent ?? Image(systemName: "checkmark")
             )
 
             self.messageMenu = MessageMenu(
-                delete: delete ?? Image("delete", bundle: .current),
-                edit: edit ?? Image("edit", bundle: .current),
-                forward: forward ?? Image("forward", bundle: .current),
-                retry: retry ?? Image("retry", bundle: .current),
-                save: save ?? Image("save", bundle: .current),
-                select: select ?? Image("select", bundle: .current)
+                delete: delete ?? ChatPortableImages.image("delete", fallback: "trash"),
+                edit: edit ?? ChatPortableImages.image("edit", fallback: "square.and.pencil"),
+                forward: forward ?? ChatPortableImages.image("forward", fallback: "arrowshape.turn.up.right"),
+                retry: retry ?? ChatPortableImages.image("retry", fallback: "arrow.clockwise"),
+                save: save ?? ChatPortableImages.image("save", fallback: "square.and.arrow.down"),
+                select: select ?? ChatPortableImages.image("select", fallback: "checkmark.circle")
             )
 
             self.recordAudio = RecordAudio(
-                cancelRecord: cancelRecord ?? Image("cancelRecord", bundle: .current),
-                deleteRecord: deleteRecord ?? Image("deleteRecord", bundle: .current),
-                lockRecord: lockRecord ?? Image("lockRecord", bundle: .current),
+                cancelRecord: cancelRecord ?? ChatPortableImages.image("cancelRecord", fallback: "chevron.left"),
+                deleteRecord: deleteRecord ?? ChatPortableImages.image("deleteRecord", fallback: "trash"),
+                lockRecord: lockRecord ?? ChatPortableImages.image("lockRecord", fallback: "lock.fill"),
                 pauseRecord: pauseRecord ?? Image(systemName: "pause.fill"),
                 playRecord: playRecord ?? Image(systemName: "play.fill"),
-                sendRecord: sendRecord ?? Image("sendRecord", bundle: .current),
-                stopRecord: stopRecord ?? Image("stopRecord", bundle: .current)
+                sendRecord: sendRecord ?? ChatPortableImages.image("sendRecord", fallback: "arrow.up"),
+                stopRecord: stopRecord ?? ChatPortableImages.image("stopRecord", fallback: "stop.fill")
             )
 
             self.reply = Reply(

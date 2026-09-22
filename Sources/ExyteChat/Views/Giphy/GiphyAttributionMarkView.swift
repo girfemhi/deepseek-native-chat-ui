@@ -17,7 +17,7 @@ struct GiphyAttributionMarkView: View {
             Spacer()
             HStack {
                 Spacer()
-                Image(getImageName(), bundle: .module)
+                ChatPortableImages.image(getImageName(), fallback: "photo.on.rectangle")
                     .padding(.bottom, CustomTabBarController().tabBarHeight + PADDING_ABOVE_TAB)
             }
         }

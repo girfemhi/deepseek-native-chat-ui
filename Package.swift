@@ -15,8 +15,8 @@ let package = Package(
     ],
     dependencies: [
         .package(
-            url: "https://github.com/exyte/MediaPicker.git",
-            from: "3.4.4"
+            url: "https://github.com/girfemhi/deepseek-media-picker.git",
+            revision: "279029752b706731209b682142337a9a2f353417"
         ),
         .package(
            url: "https://github.com/Giphy/giphy-ios-sdk",
@@ -35,11 +35,13 @@ let package = Package(
         .target(
             name: "ExyteChat",
             dependencies: [
-                .product(name: "ExyteMediaPicker", package: "MediaPicker"),
+                .product(name: "ExyteMediaPicker", package: "deepseek-media-picker"),
                 .product(name: "GiphyUISDK", package: "giphy-ios-sdk"),
                 .product(name: "Kingfisher", package: "Kingfisher"),
                 .product(name: "AnchoredPopup", package: "AnchoredPopup")
             ],
+            exclude: ["Resources/Media.xcassets"],
+            resources: [.process("PortableResources")],
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency")
             ]

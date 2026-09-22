@@ -84,7 +84,7 @@ public struct CachedAsyncImage<Content>: View where Content: View {
         // Load xcassets images directly — no disk I/O, no Kingfisher overhead
         if url.scheme == "asset", let name = url.host {
 #if canImport(UIKit)
-            if let uiImage = UIImage(named: name) {
+            if let uiImage = UIImage(named: name, in: .current, compatibleWith: nil) {
                 withAnimation(transaction.animation) {
                     phase = .success(Image(uiImage: uiImage))
                 }

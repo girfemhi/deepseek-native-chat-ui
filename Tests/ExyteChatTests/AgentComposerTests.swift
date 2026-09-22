@@ -1,6 +1,7 @@
 import XCTest
 @testable import ExyteChat
 import ExyteMediaPicker
+import UIKit
 
 @MainActor
 final class AgentComposerTests: XCTestCase {
@@ -50,6 +51,56 @@ final class AgentComposerTests: XCTestCase {
         XCTAssertEqual(gate.submittedDraft?.text, "first")
         XCTAssertEqual(model.text, "next")
         XCTAssertEqual(model.state, .hasTextOrMedia)
+    }
+
+    func testDeferredAcknowledgementAfterStopPublishesEmptyDraft() async {
+        let gate = CommitGate()
+        let model = InputViewModel()
+        var snapshots: [DraftMessage] = []
+        model.onDraftChange = { snapshots.append($0) }
+        model.sendCommitMode = .deferred { draft in await gate.submit(draft) }
+        model.onStart()
+        model.text = "send me"
+        model.state = .hasTextOrMedia
+
+        model.send()
+        await waitUntil { gate.hasSubmission }
+        model.onStop()
+        XCTAssertEqual(snapshots.last?.text, "send me")
+
+        gate.resolve(true)
+        await waitUntil { !model.isCommitting }
+
+        XCTAssertEqual(snapshots.last?.id, gate.submittedDraft?.id)
+        XCTAssertEqual(snapshots.last?.createdAt, gate.submittedDraft?.createdAt)
+        XCTAssertEqual(snapshots.last?.text, "")
+        XCTAssertTrue(snapshots.last?.medias.isEmpty == true)
+        XCTAssertTrue(snapshots.last?.documents.isEmpty == true)
+    }
+
+    func testDeferredAcknowledgementAfterStopPublishesNewText() async {
+        let gate = CommitGate()
+        let model = InputViewModel()
+        var snapshots: [DraftMessage] = []
+        model.onDraftChange = { snapshots.append($0) }
+        model.sendCommitMode = .deferred { draft in await gate.submit(draft) }
+        model.onStart()
+        model.text = "send me"
+        model.state = .hasTextOrMedia
+
+        model.send()
+        await waitUntil { gate.hasSubmission }
+        model.text = "next draft"
+        model.onStop()
+        XCTAssertEqual(snapshots.last?.text, "next draft")
+
+        gate.resolve(true)
+        await waitUntil { !model.isCommitting }
+
+        XCTAssertEqual(model.text, "next draft")
+        XCTAssertEqual(snapshots.last?.text, "next draft")
+        XCTAssertEqual(snapshots.last?.id, gate.submittedDraft?.id)
+        XCTAssertEqual(snapshots.last?.createdAt, gate.submittedDraft?.createdAt)
     }
 
     func testDisabledSendNeverSubmitsOrClears() async {
@@ -267,6 +318,53 @@ final class AgentComposerTests: XCTestCase {
         XCTAssertEqual(projected.attachments, message.attachments)
         XCTAssertEqual(projected.recording, message.recording)
         XCTAssertEqual(projected.id, message.id)
+    }
+
+    func testPortableThemeImagesActuallyInitialize() {
+        let names = [
+            "backArrow", "camera", "contact", "document", "location", "photo",
+            "pickDocument", "pickLocation", "pickPhoto", "add", "arrowSend",
+            "sticker", "attach", "attachCamera", "microphone", "chevronDown",
+            "chevronRight", "attachedDocument", "MuteVideo", "pauseAudio",
+            "playAudio", "delete", "edit", "forward", "retry", "save", "select",
+            "cancelRecord", "deleteRecord", "lockRecord", "sendRecord", "stopRecord",
+            "waiting", "Poweredby_100px-Black_VertText", "Poweredby_100px-White_VertText"
+        ]
+        for name in names {
+            XCTAssertNotNil(UIImage(named: name, in: ChatPortableImages.bundle, compatibleWith: nil), name)
+        }
+
+        _ = ChatTheme.Images()
+        _ = ChatTheme.agentDefault.images
+    }
+
+    func testPortableColorsPreserveAssetCatalogAppearance() {
+        let light = UIColor(ChatPortableColors.mainBG)
+            .resolvedColor(with: UITraitCollection(userInterfaceStyle: .light))
+        let dark = UIColor(ChatPortableColors.mainBG)
+            .resolvedColor(with: UITraitCollection(userInterfaceStyle: .dark))
+        assertRGBA(light, 1, 1, 1, 1)
+        assertRGBA(dark, 0, 0, 0, 1)
+    }
+
+    private func assertRGBA(
+        _ color: UIColor,
+        _ red: CGFloat,
+        _ green: CGFloat,
+        _ blue: CGFloat,
+        _ alpha: CGFloat,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        var actualRed: CGFloat = 0
+        var actualGreen: CGFloat = 0
+        var actualBlue: CGFloat = 0
+        var actualAlpha: CGFloat = 0
+        XCTAssertTrue(color.getRed(&actualRed, green: &actualGreen, blue: &actualBlue, alpha: &actualAlpha), file: file, line: line)
+        XCTAssertEqual(actualRed, red, accuracy: 0.000_001, file: file, line: line)
+        XCTAssertEqual(actualGreen, green, accuracy: 0.000_001, file: file, line: line)
+        XCTAssertEqual(actualBlue, blue, accuracy: 0.000_001, file: file, line: line)
+        XCTAssertEqual(actualAlpha, alpha, accuracy: 0.000_001, file: file, line: line)
     }
 
     private func waitUntil(
