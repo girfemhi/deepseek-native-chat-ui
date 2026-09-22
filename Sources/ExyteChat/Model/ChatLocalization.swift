@@ -29,6 +29,7 @@ public struct ChatLocalization: Hashable, Sendable {
     /// Format string with a single `%d` placeholder for the number of minutes, e.g. "updated %d min ago"
     public var liveLocationUpdatedMinutesAgoFormat: String
     public var openInMapsText: String
+    public var openDocumentText: String
 
     public init(
         inputPlaceholder: String,
@@ -50,7 +51,8 @@ public struct ChatLocalization: Hashable, Sendable {
         liveLocationEndedText: String = String(localized: "Live location ended"),
         liveLocationUpdatedJustNowText: String = String(localized: "updated just now"),
         liveLocationUpdatedMinutesAgoFormat: String = String(localized: "updated %d min ago"),
-        openInMapsText: String = String(localized: "Open in Maps")
+        openInMapsText: String = String(localized: "Open in Maps"),
+        openDocumentText: String = String(localized: "Open")
     ) {
         self.inputPlaceholder = inputPlaceholder
         self.signatureText = signatureText
@@ -72,6 +74,7 @@ public struct ChatLocalization: Hashable, Sendable {
         self.liveLocationUpdatedJustNowText = liveLocationUpdatedJustNowText
         self.liveLocationUpdatedMinutesAgoFormat = liveLocationUpdatedMinutesAgoFormat
         self.openInMapsText = openInMapsText
+        self.openDocumentText = openDocumentText
     }
 
    public static var defaultLocalization: ChatLocalization {
@@ -95,7 +98,8 @@ public struct ChatLocalization: Hashable, Sendable {
             liveLocationEndedText: String(localized: "Live location ended"),
             liveLocationUpdatedJustNowText: String(localized: "updated just now"),
             liveLocationUpdatedMinutesAgoFormat: String(localized: "updated %d min ago"),
-            openInMapsText: String(localized: "Open in Maps")
+            openInMapsText: String(localized: "Open in Maps"),
+            openDocumentText: String(localized: "Open")
         )
     }
 
@@ -121,7 +125,8 @@ public struct ChatLocalization: Hashable, Sendable {
             liveLocationEndedText: "实时位置共享已结束",
             liveLocationUpdatedJustNowText: "刚刚更新",
             liveLocationUpdatedMinutesAgoFormat: "%d 分钟前更新",
-            openInMapsText: "在地图中打开"
+            openInMapsText: "在地图中打开",
+            openDocumentText: "打开文件"
         )
     }
 }

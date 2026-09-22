@@ -420,6 +420,16 @@ final class AgentComposerTests: XCTestCase {
         assertRGBA(dark, 0, 0, 0, 1)
     }
 
+    func testLocalDocumentsUseQuickLookAndRemoteURLsRemainExternal() {
+        let local = URL(fileURLWithPath: "/tmp/report.pdf")
+        let remote = URL(string: "https://example.invalid/report.pdf")!
+
+        XCTAssertEqual(AttachmentsPage.documentOpenRoute(for: local), .quickLook(local))
+        XCTAssertEqual(AttachmentsPage.documentOpenRoute(for: remote), .external(remote))
+        XCTAssertEqual(PreviewItem(url: local).previewItemURL, local)
+        XCTAssertEqual(ChatLocalization.simplifiedChinese.openDocumentText, "打开文件")
+    }
+
     func testComposerDiscardCancelsLateAcknowledgementAndDeletesOnlyOwnedRecording() async throws {
         let ownedURL = RecordingFileStore.makeURL(fileExtension: ".m4a")
         let unrelatedURL = FileManager.tempDirPath.appendingPathComponent("unrelated-recording-\(UUID().uuidString).m4a")
