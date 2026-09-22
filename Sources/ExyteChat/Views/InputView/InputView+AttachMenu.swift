@@ -81,7 +81,14 @@ extension InputView {
     fileprivate func attachMenuButton(items: [AttachMenuItem]) -> some View {
         theme.images.inputView.attach
             .viewSize(24)
-            .padding(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 6))
+            .padding(
+                EdgeInsets(
+                    top: isEditorial ? 10 : 12,
+                    leading: isEditorial ? 10 : 12,
+                    bottom: isEditorial ? 10 : 12,
+                    trailing: isEditorial ? 10 : 6
+                )
+            )
             .useAsPopupAnchor(id: attachMenuPopupId) {
                 attachMenuContent(items)
             } customize: {
@@ -99,7 +106,14 @@ extension InputView {
             image
                 .resizable()
                 .viewSize(24)
-                .padding(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 6))
+                .padding(
+                    EdgeInsets(
+                        top: isEditorial ? 10 : 12,
+                        leading: isEditorial ? 10 : 12,
+                        bottom: isEditorial ? 10 : 12,
+                        trailing: isEditorial ? 10 : 6
+                    )
+                )
         }
     }
 }

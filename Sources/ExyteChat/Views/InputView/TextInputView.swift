@@ -13,6 +13,7 @@ struct TextInputView: View {
     @Binding var text: String
     var inputFieldId: UUID
     var style: InputViewStyle
+    var layout: InputViewLayout = .classic
     var availableInputs: [AvailableInputType]
     var localization: ChatLocalization
     
@@ -22,9 +23,9 @@ struct TextInputView: View {
             .customFocus($globalFocusState.focus, equals: .uuid(inputFieldId))
             .foregroundColor(style == .message ? theme.colors.inputText : theme.colors.inputSignatureText)
             .lineLimit(1...6)
-            .frame(minHeight: 44)
-            .padding(.vertical, 10)
-            .padding(.leading, !isAttachmentsAvailable() ? 12 : 0)
+            .frame(minHeight: layout == .editorial ? 24 : 44)
+            .padding(.vertical, layout == .editorial ? 12 : 10)
+            .padding(.leading, layout == .editorial ? 0 : (!isAttachmentsAvailable() ? 12 : 0))
             .simultaneousGesture(
                 TapGesture().onEnded {
                     globalFocusState.focus = .uuid(inputFieldId)

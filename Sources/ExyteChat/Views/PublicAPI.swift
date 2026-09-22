@@ -398,6 +398,13 @@ public extension ChatView {
         return view
     }
 
+    /// Overrides the theme's composer layout for this chat.
+    func inputViewLayout(_ layout: InputViewLayout) -> ChatView {
+        var view = self
+        view.inputViewCustomizationParameters.inputLayout = layout
+        return view
+    }
+
     func setAvailableInputs(_ types: [AvailableInputType]) -> ChatView {
         var view = self
         view.inputViewCustomizationParameters.availableInputs = types

@@ -14,6 +14,7 @@ struct InputView: View {
     @Environment(\.chatTheme) var theme
     @Environment(\.mediaPickerTheme) var pickerTheme
     @Environment(\.chatSize) var chatSize
+    @Environment(\.colorScheme) private var colorScheme
 
     @EnvironmentObject var keyboardState: KeyboardState
 
@@ -22,6 +23,8 @@ struct InputView: View {
 
     var inputFieldId: UUID
     var style: InputViewStyle
+    var layout: InputViewLayout = .classic
+    var agentInputAccessory: (() -> AnyView)? = nil
     var availableInputs: [AvailableInputType]
     var recorderSettings: RecorderSettings = RecorderSettings()
     var audioRecordingMode: AudioRecordingMode = .holdToRecord
@@ -48,7 +51,42 @@ struct InputView: View {
         viewModel.state
     }
 
+    var isEditorial: Bool {
+        style == .message && layout == .editorial
+    }
+
+    var actionButtonSize: CGFloat {
+        isEditorial ? 44 : 48
+    }
+
+    var editorialRightButtonWidth: CGFloat {
+        state == .editing ? 88 : actionButtonSize
+    }
+
     var body: some View {
+        inputLayout
+            .background(backgroundColor)
+            .disabled(!viewModel.inputEnabled)
+            .opacity(viewModel.inputEnabled ? 1 : 0.55)
+            .onAppear {
+                viewModel.recordingPlayer = recordingPlayer
+                viewModel.setRecorderSettings(recorderSettings: recorderSettings)
+            }
+            .onDrag(towards: .bottom, ofAmount: 100...) {
+                keyboardState.resignFirstResponder()
+            }
+    }
+
+    @ViewBuilder
+    private var inputLayout: some View {
+        if isEditorial {
+            editorialLayout
+        } else {
+            classicLayout
+        }
+    }
+
+    private var classicLayout: some View {
         VStack(spacing: 4) {
             viewOnTop
                 .padding(.top, 6)
@@ -72,15 +110,57 @@ struct InputView: View {
             }
             .padding(MessageView.horizontalScreenEdgePadding, 8)
         }
-        .background(backgroundColor)
-        .disabled(!viewModel.inputEnabled)
-        .opacity(viewModel.inputEnabled ? 1 : 0.55)
-        .onAppear {
-            viewModel.recordingPlayer = recordingPlayer
-            viewModel.setRecorderSettings(recorderSettings: recorderSettings)
-        }
-        .onDrag(towards: .bottom, ofAmount: 100...) {
-            keyboardState.resignFirstResponder()
+    }
+
+    private var editorialLayout: some View {
+        VStack(spacing: 8) {
+            viewOnTop
+                .padding(.top, 4)
+                .transition(.move(edge: .bottom))
+                .allowsHitTesting(viewModel.inputEnabled && !viewModel.isCommitting)
+
+            VStack(spacing: 0) {
+                HStack(alignment: .bottom, spacing: 0) {
+                    middleView
+                    rightView
+                }
+                .padding(.horizontal, 12)
+                .frame(minHeight: 48)
+
+                HStack(spacing: 8) {
+                    leftView
+                        .frame(width: 44, height: 44)
+
+                    if let agentInputAccessory {
+                        agentInputAccessory()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .frame(height: 44)
+                            .clipped()
+                    } else {
+                        Spacer(minLength: 0)
+                    }
+
+                    rightOutsideButton
+                        .frame(width: editorialRightButtonWidth, height: actionButtonSize)
+                }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 6)
+            }
+            .background {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(theme.colors.inputBG)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .stroke(theme.colors.mainText.opacity(0.08), lineWidth: 0.5)
+                    }
+                    .shadow(
+                        color: Color.black.opacity(colorScheme == .dark ? 0.16 : 0.06),
+                        radius: 2,
+                        y: 1
+                    )
+            }
+            .frameGetter($inputBarFrame)
+            .padding(MessageView.horizontalScreenEdgePadding, 8)
         }
     }
 
@@ -117,6 +197,7 @@ struct InputView: View {
                     text: $viewModel.text,
                     inputFieldId: inputFieldId,
                     style: style,
+                    layout: layout,
                     availableInputs: availableInputs,
                     localization: localization
                 )
@@ -151,7 +232,7 @@ struct InputView: View {
     var rightOutsideButton: some View {
         if state == .editing {
             editingButtons
-                .frame(height: 48)
+                .frame(height: actionButtonSize)
         } else if audioRecordingMode == .tapToToggle {
             tapToToggleButton
         } else {
@@ -192,11 +273,19 @@ struct InputView: View {
                 if viewModel.isCommitting {
                     ProgressView()
                         .tint(theme.colors.mainTint)
-                        .viewSize(48)
+                        .viewSize(actionButtonSize)
                 } else {
-                    theme.images.inputView.arrowSend
-                        .viewSize(48)
-                        .circleBackground(theme.colors.sendButtonBackground)
+                    if isEditorial {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(Color.white)
+                            .viewSize(actionButtonSize)
+                            .background(Circle().fill(theme.colors.sendButtonBackground))
+                    } else {
+                        theme.images.inputView.arrowSend
+                            .viewSize(actionButtonSize)
+                            .circleBackground(theme.colors.sendButtonBackground)
+                    }
                 }
             }
         }

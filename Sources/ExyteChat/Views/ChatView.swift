@@ -448,36 +448,48 @@ public struct ChatView<MessageContent: View, InputViewContent: View, MenuAction:
     }
 
     var inputView: some View {
-        VStack(spacing: 0) {
-            if let accessory = inputViewCustomizationParameters.agentInputAccessory {
-                accessory()
+        let customInputView = inputViewBuilder(
+            InputViewBuilderParameters(
+                text: $inputViewModel.text,
+                attachments: inputViewModel.attachments,
+                inputViewState: inputViewModel.state,
+                inputViewStyle: .message,
+                inputViewActionClosure: inputViewModel.inputViewAction()
+            ) {
+                globalFocusState.focus = nil
             }
+        )
+        let layout = inputViewCustomizationParameters.inputLayout ?? theme.style.inputLayout
 
-            ZStack {
-                let customInputView = inputViewBuilder(
-                    InputViewBuilderParameters(
-                        text: $inputViewModel.text,
-                        attachments: inputViewModel.attachments,
-                        inputViewState: inputViewModel.state,
-                        inputViewStyle: .message,
-                        inputViewActionClosure: inputViewModel.inputViewAction()
-                    ) {
-                        globalFocusState.focus = nil
-                    }
-                )
+        return VStack(spacing: 0) {
+            if customInputView is DummyView {
+                if layout == .classic,
+                   let accessory = inputViewCustomizationParameters.agentInputAccessory {
+                    accessory()
+                }
 
-                if customInputView is DummyView {
+                ZStack {
                     InputView(
                         viewModel: inputViewModel,
                         inputFieldId: viewModel.inputFieldId,
                         style: .message,
+                        layout: layout,
+                        agentInputAccessory: layout == .editorial
+                            ? inputViewCustomizationParameters.agentInputAccessory
+                            : nil,
                         availableInputs: inputViewCustomizationParameters.availableInputs,
                         recorderSettings: inputViewCustomizationParameters.recorderSettings,
                         audioRecordingMode: inputViewCustomizationParameters.audioRecordingMode,
                         photoPickerBackend: inputViewCustomizationParameters.photoPickerBackend,
                         localization: chatCustomizationParameters.localization
                     )
-                } else {
+                }
+            } else {
+                if let accessory = inputViewCustomizationParameters.agentInputAccessory {
+                    accessory()
+                }
+
+                ZStack {
                     customInputView
                         .customFocus($globalFocusState.focus, equals: .uuid(viewModel.inputFieldId))
                 }

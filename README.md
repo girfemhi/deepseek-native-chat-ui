@@ -269,6 +269,20 @@ host application to supply its own API key. To enable every built-in input,
 pass `.setAvailableInputs(Array(AvailableInputType.allCases))`; omit `.giphy`
 when the host has no Giphy key.
 
+The default composer remains `.classic`. Agent clients can opt into the compact
+two-row editorial composer through either the theme or a per-chat override:
+
+```swift
+ChatTheme(style: .init(inputLayout: .editorial))
+
+chat.inputViewLayout(.editorial)
+```
+
+Editorial mode keeps the upstream text, attachment, reply, recording and send
+actions. It places multiline text above a 44-point action row, moves
+`agentInputAccessory` between attachment and send controls, and uses the theme's
+semantic colors without introducing a product-specific accent.
+
 ## Custom message menu
 Long tap on a message will display a menu for this message (can be turned off, see Modifiers). To define custom message menu actions declare an enum conforming to `MessageMenuAction`. Then the library will show your custom menu options on long tap on message instead of default ones, if you pass your enum's name to it (see code sample). Once the action is selected special callback will be called. Here is a simple example:
 ```swift

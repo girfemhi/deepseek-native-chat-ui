@@ -430,6 +430,17 @@ final class AgentComposerTests: XCTestCase {
         XCTAssertEqual(ChatLocalization.simplifiedChinese.openDocumentText, "打开文件")
     }
 
+    func testComposerLayoutDefaultsToClassicAndSupportsEditorialOverride() {
+        XCTAssertEqual(ChatTheme.Style().inputLayout, .classic)
+        XCTAssertEqual(ChatTheme.Style(inputLayout: .editorial).inputLayout, .editorial)
+
+        let classic = ChatView(messages: []) { _ in }
+        XCTAssertNil(classic.inputViewCustomizationParameters.inputLayout)
+
+        let editorial = classic.inputViewLayout(.editorial)
+        XCTAssertEqual(editorial.inputViewCustomizationParameters.inputLayout, .editorial)
+    }
+
     func testComposerDiscardCancelsLateAcknowledgementAndDeletesOnlyOwnedRecording() async throws {
         let ownedURL = RecordingFileStore.makeURL(fileExtension: ".m4a")
         let unrelatedURL = FileManager.tempDirPath.appendingPathComponent("unrelated-recording-\(UUID().uuidString).m4a")

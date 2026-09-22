@@ -83,6 +83,7 @@ struct InputViewCustomizationParameters {
     var inputEnabled = true
     var sendDisabled = false
     var sendCommitMode: SendCommitMode = .immediate
+    var inputLayout: InputViewLayout?
     var availableInputs: [AvailableInputType] = [.text, .audio, .media]
     var recorderSettings = RecorderSettings()
     var audioRecordingMode: AudioRecordingMode = .holdToRecord

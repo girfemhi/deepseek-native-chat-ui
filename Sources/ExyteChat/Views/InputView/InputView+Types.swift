@@ -12,6 +12,13 @@ public enum InputViewStyle: Sendable {
     case signature
 }
 
+public enum InputViewLayout: Sendable, Equatable {
+    /// Upstream ExyteChat composer layout.
+    case classic
+    /// Compact editorial layout with text above a dedicated action row.
+    case editorial
+}
+
 public enum AudioRecordingMode: Sendable {
     /// Default: hold the mic button to record; slide up to lock into hands-free mode.
     case holdToRecord

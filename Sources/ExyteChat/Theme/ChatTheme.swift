@@ -493,9 +493,14 @@ public struct ChatTheme: Sendable {
     
     public struct Style: Sendable {
         public var replyOpacity: Double
+        public var inputLayout: InputViewLayout
         
-        public init(replyOpacity: Double = 0.8) {
+        public init(
+            replyOpacity: Double = 0.8,
+            inputLayout: InputViewLayout = .classic
+        ) {
             self.replyOpacity = replyOpacity
+            self.inputLayout = inputLayout
         }
     }
 }

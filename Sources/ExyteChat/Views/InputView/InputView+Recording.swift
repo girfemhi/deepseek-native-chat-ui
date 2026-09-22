@@ -14,7 +14,7 @@ extension InputView {
         ZStack {
             if [.isRecordingTap, .isRecordingHold].contains(state) {
                 RecordIndicator()
-                    .viewSize(80)
+                    .viewSize(isEditorial ? 56 : 80)
                     .foregroundColor(theme.colors.sendButtonBackground)
             }
 
@@ -41,14 +41,14 @@ extension InputView {
                 }
             }
         }
-        .viewSize(48)
+        .viewSize(actionButtonSize)
     }
 
     var tapToToggleButton: some View {
         ZStack {
             if state == .isRecordingTap {
                 RecordIndicator()
-                    .viewSize(80)
+                    .viewSize(isEditorial ? 56 : 80)
                     .foregroundColor(theme.colors.sendButtonBackground)
             }
 
@@ -65,14 +65,24 @@ extension InputView {
                     .allowsHitTesting(viewModel.inputEnabled && !viewModel.isCommitting)
             }
         }
-        .viewSize(48)
+        .viewSize(actionButtonSize)
     }
 
     var recordButton: some View {
-        theme.images.inputView.microphone
-            .viewSize(48)
-            .circleBackground(theme.colors.sendButtonBackground)
-            .frameGetter($recordButtonFrame)
+        Group {
+            if isEditorial {
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(theme.colors.mainTint)
+                    .viewSize(actionButtonSize)
+                    .background(Circle().fill(theme.colors.mainText.opacity(0.06)))
+            } else {
+                theme.images.inputView.microphone
+                    .viewSize(actionButtonSize)
+                    .circleBackground(theme.colors.sendButtonBackground)
+            }
+        }
+        .frameGetter($recordButtonFrame)
     }
 
     var deleteRecordButton: some View {
@@ -81,7 +91,14 @@ extension InputView {
         } label: {
             theme.images.recordAudio.deleteRecord
                 .viewSize(24)
-                .padding(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 8))
+                .padding(
+                    EdgeInsets(
+                        top: isEditorial ? 10 : 12,
+                        leading: isEditorial ? 10 : 12,
+                        bottom: isEditorial ? 10 : 12,
+                        trailing: isEditorial ? 10 : 8
+                    )
+                )
         }
         .frameGetter($deleteRecordFrame)
     }
