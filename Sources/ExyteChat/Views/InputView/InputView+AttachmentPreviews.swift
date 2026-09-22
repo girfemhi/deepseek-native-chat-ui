@@ -96,6 +96,7 @@ extension InputView {
                 }
             }
         }
+        .frame(height: 76)
     }
 
     func horizontalAttachmentsPreviewScroll<Content: View>(@ViewBuilder content: () -> Content) -> some View {
@@ -235,23 +236,60 @@ private struct DocumentAttachmentThumbnail: View {
     var document: DocumentItem
     var onRemove: () -> Void
 
+    private var formattedFileSize: String? {
+        guard let fileSize = document.fileSize, fileSize >= 0 else { return nil }
+        return ByteCountFormatter.string(fromByteCount: Int64(fileSize), countStyle: .file)
+    }
+
     var body: some View {
-        RemovableAttachmentThumbnail(onRemove: onRemove) {
-            VStack(spacing: 4) {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(theme.colors.mainTint.opacity(0.10))
+
                 theme.images.message.attachedDocument
+                    .renderingMode(.template)
                     .resizable()
                     .scaledToFit()
-                    .viewSize(28)
-
-                Text(document.fileName)
-                    .font(.caption2)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-                    .foregroundColor(theme.colors.mainText)
-                    .padding(.horizontal, 4)
+                    .foregroundColor(theme.colors.mainTint)
+                    .frame(width: 21, height: 24)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(theme.colors.messageFriendBG)
+            .frame(width: 40, height: 40)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(document.fileName)
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .foregroundColor(theme.colors.mainText)
+
+                if let formattedFileSize {
+                    Text(formattedFileSize)
+                        .font(.caption2)
+                        .foregroundColor(theme.colors.mainCaptionText)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button(action: onRemove) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.colors.mainCaptionText)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 6)
+        .frame(width: 212, height: 64)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(theme.colors.inputBG)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(theme.colors.mainCaptionText.opacity(0.22), lineWidth: 0.5)
         }
     }
 }
