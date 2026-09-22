@@ -326,7 +326,10 @@ final class AgentComposerTests: XCTestCase {
         let model = InputViewModel()
         model.text = "keep"
         model.attachments.documents = [document]
-        model.attachments.recording = Recording(duration: 1)
+        model.attachments.recording = Recording(
+            duration: 1,
+            url: RecordingFileStore.makeURL(fileExtension: ".m4a")
+        )
         model.state = .isRecordingTap
         model.showMediaPicker = true
         model.showGiphyPicker = true
@@ -484,6 +487,61 @@ final class AgentComposerTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: unrelatedURL.path))
     }
 
+    func testPendingRecordingStartReleasedAfterDiscardCannotReacquireMicrophone() async throws {
+        let recorder = SuspendedRecordingService()
+        let state = ChatComposerState(inputViewModel: InputViewModel(recorder: recorder))
+        let model = state.inputViewModel
+        let ownedURL = RecordingFileStore.makeURL(fileExtension: ".m4a")
+        try Data("pending".utf8).write(to: ownedURL)
+
+        model.inputViewAction()(.recordAudioTap)
+        await waitUntilAsync { await recorder.hasPendingStart }
+        state.discard()
+        await recorder.releaseStart(with: ownedURL)
+        await waitUntil { !FileManager.default.fileExists(atPath: ownedURL.path) }
+        let isRecording = await recorder.isRecording
+
+        XCTAssertNil(model.attachments.recording)
+        XCTAssertFalse(isRecording)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ownedURL.path))
+    }
+
+    func testPendingRecordingStartReleasedAfterDisableCannotReacquireMicrophone() async throws {
+        let recorder = SuspendedRecordingService()
+        let model = InputViewModel(recorder: recorder)
+        let ownedURL = RecordingFileStore.makeURL(fileExtension: ".m4a")
+        try Data("pending".utf8).write(to: ownedURL)
+
+        model.inputViewAction()(.recordAudioTap)
+        await waitUntilAsync { await recorder.hasPendingStart }
+        model.setInputEnabled(false)
+        await recorder.releaseStart(with: ownedURL)
+        await waitUntil { !FileManager.default.fileExists(atPath: ownedURL.path) }
+        let isRecording = await recorder.isRecording
+
+        XCTAssertNil(model.attachments.recording)
+        XCTAssertFalse(isRecording)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ownedURL.path))
+    }
+
+    func testPendingRecordingStartReleasedAfterDeleteCannotReacquireMicrophone() async throws {
+        let recorder = SuspendedRecordingService()
+        let model = InputViewModel(recorder: recorder)
+        let ownedURL = RecordingFileStore.makeURL(fileExtension: ".m4a")
+        try Data("pending".utf8).write(to: ownedURL)
+
+        model.inputViewAction()(.recordAudioTap)
+        await waitUntilAsync { await recorder.hasPendingStart }
+        model.inputViewAction()(.deleteRecord)
+        await recorder.releaseStart(with: ownedURL)
+        await waitUntil { !FileManager.default.fileExists(atPath: ownedURL.path) }
+        let isRecording = await recorder.isRecording
+
+        XCTAssertNil(model.attachments.recording)
+        XCTAssertFalse(isRecording)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ownedURL.path))
+    }
+
     private func assertRGBA(
         _ color: UIColor,
         _ red: CGFloat,
@@ -512,6 +570,17 @@ final class AgentComposerTests: XCTestCase {
             await Task.yield()
         }
         XCTAssertTrue(predicate())
+    }
+
+    private func waitUntilAsync(
+        _ predicate: @escaping () async -> Bool,
+        iterations: Int = 200
+    ) async {
+        for _ in 0..<iterations {
+            if await predicate() { return }
+            await Task.yield()
+        }
+        XCTFail("condition was not satisfied")
     }
 }
 
@@ -555,5 +624,37 @@ private final class CommitGate: @unchecked Sendable {
     func resolve(_ result: Bool) {
         continuation?.resume(returning: result)
         continuation = nil
+    }
+}
+
+private actor SuspendedRecordingService: RecordingService {
+    private var pendingToken: UUID?
+    private var activeToken: UUID?
+    private var continuation: CheckedContinuation<URL?, Never>?
+
+    var isAllowedToRecordAudio: Bool { true }
+    var isRecording: Bool { activeToken != nil }
+    var hasPendingStart: Bool { continuation != nil }
+
+    func setRecorderSettings(_ recorderSettings: RecorderSettings) {}
+
+    func startRecording(
+        token: UUID,
+        durationProgressHandler: @escaping RecordingProgressHandler
+    ) async -> URL? {
+        pendingToken = token
+        return await withCheckedContinuation { continuation = $0 }
+    }
+
+    func releaseStart(with url: URL?) {
+        activeToken = pendingToken
+        pendingToken = nil
+        continuation?.resume(returning: url)
+        continuation = nil
+    }
+
+    func stopRecording(token: UUID?) {
+        guard token == nil || activeToken == token else { return }
+        activeToken = nil
     }
 }

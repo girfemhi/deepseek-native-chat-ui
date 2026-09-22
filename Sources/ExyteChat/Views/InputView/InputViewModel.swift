@@ -38,7 +38,7 @@ final class InputViewModel: ObservableObject {
     var didSendMessage: ((DraftMessage) -> Void)?
     var didCommitMessage: ((DraftMessage) -> Void)?
 
-    private var recorder = Recorder()
+    private let recorder: any RecordingService
 
     private var saveEditingClosure: ((String) -> Void)?
     private var attachmentRevision = 0
@@ -55,11 +55,18 @@ final class InputViewModel: ObservableObject {
     private var draftChangeTask: Task<Void, Never>?
     private var submissionTask: Task<Void, Never>?
     private var submissionEpoch = 0
+    private var recordingStartTask: Task<Void, Never>?
+    private var recordingGeneration = 0
+    private var recordingToken: UUID?
     private let legacyMountID = UUID()
     private var activeMountIDs: Set<UUID> = []
 
     private var recordPlayerSubscription: AnyCancellable?
     private var subscriptions = Set<AnyCancellable>()
+
+    init(recorder: any RecordingService = Recorder()) {
+        self.recorder = recorder
+    }
     
     func setRecorderSettings(recorderSettings: RecorderSettings = RecorderSettings()) {
         Task {
@@ -105,9 +112,15 @@ final class InputViewModel: ObservableObject {
         showLocationPicker = false
 
         if [.isRecordingTap, .isRecordingHold, .waitingForRecordingPermission].contains(state) {
+            let token = invalidateRecordingStart()
+            let generation = recordingGeneration
             Task {
-                await recorder.stopRecording()
+                await recorder.stopRecording(token: token)
                 await recordingPlayer?.reset()
+                guard generation == recordingGeneration else { return }
+                if attachments.recording?.url == nil {
+                    attachments.recording = nil
+                }
                 state = attachments.recording == nil ? .empty : .hasRecording
             }
         }
@@ -122,6 +135,7 @@ final class InputViewModel: ObservableObject {
         submissionEpoch += 1
         submissionTask?.cancel()
         submissionTask = nil
+        let recordingToken = invalidateRecordingStart()
         draftChangeTask?.cancel()
         draftChangeTask = nil
         unsubscribeRecordPlayer()
@@ -135,7 +149,7 @@ final class InputViewModel: ObservableObject {
         lastPublishedDraftRevision = draftRevision
 
         Task {
-            await recorder.stopRecording()
+            await recorder.stopRecording(token: recordingToken)
             await recordingPlayer?.reset()
             ownedRecordingURLs.forEach(RecordingFileStore.deleteIfOwned)
         }
@@ -160,9 +174,10 @@ final class InputViewModel: ObservableObject {
         isCommitting = true
         submissionEpoch += 1
         let epoch = submissionEpoch
+        let recordingToken = invalidateRecordingStart()
         submissionTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            await recorder.stopRecording()
+            await recorder.stopRecording(token: recordingToken)
             await recordingPlayer?.reset()
             guard epoch == submissionEpoch, !Task.isCancelled else { return }
             await sendMessage(epoch: epoch)
@@ -206,32 +221,35 @@ final class InputViewModel: ObservableObject {
         case .send:
             send()
         case .recordAudioTap:
-            Task {
-                state = await recorder.isAllowedToRecordAudio ? .isRecordingTap : .waitingForRecordingPermission
-                recordAudio()
-            }
+            startRecording(state: .isRecordingTap)
         case .recordAudioHold:
-            Task {
-                state = await recorder.isAllowedToRecordAudio ? .isRecordingHold : .waitingForRecordingPermission
-                recordAudio()
-            }
+            startRecording(state: .isRecordingHold)
         case .recordAudioLock:
             state = .isRecordingTap
         case .stopRecordAudio:
+            let token = invalidateRecordingStart()
+            let generation = recordingGeneration
             Task {
-                await recorder.stopRecording()
-                if let _ = attachments.recording {
+                await recorder.stopRecording(token: token)
+                guard generation == recordingGeneration else { return }
+                if attachments.recording?.url != nil {
                     state = .hasRecording
+                } else {
+                    attachments.recording = nil
+                    state = .empty
                 }
                 await recordingPlayer?.reset()
             }
         case .deleteRecord:
             let recordingURL = attachments.recording?.url
+            let token = invalidateRecordingStart()
+            let generation = recordingGeneration
             Task {
                 unsubscribeRecordPlayer()
-                await recorder.stopRecording()
-                attachments.recording = nil
+                await recorder.stopRecording(token: token)
                 RecordingFileStore.deleteIfOwned(recordingURL)
+                guard generation == recordingGeneration else { return }
+                attachments.recording = nil
             }
         case .playRecord:
             state = .playingRecording
@@ -254,22 +272,70 @@ final class InputViewModel: ObservableObject {
         }
     }
 
-    private func recordAudio() {
-        Task { @MainActor [recorder] in
-            guard inputEnabled else { return }
-            if await recorder.isRecording { return }
+    private func startRecording(state requestedState: InputViewState) {
+        let previousToken = invalidateRecordingStart()
+        recordingGeneration += 1
+        let generation = recordingGeneration
+        let token = UUID()
+        recordingToken = token
+
+        recordingStartTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await recorder.stopRecording(token: previousToken)
+            guard generation == recordingGeneration,
+                  recordingToken == token,
+                  inputEnabled,
+                  !Task.isCancelled else { return }
+
+            let allowed = await recorder.isAllowedToRecordAudio
+            guard generation == recordingGeneration,
+                  recordingToken == token,
+                  inputEnabled,
+                  !Task.isCancelled else { return }
+            state = allowed ? requestedState : .waitingForRecordingPermission
             attachments.recording = Recording()
-            let url = await recorder.startRecording { duration, samples in
-                DispatchQueue.main.async { [weak self] in
-                    self?.attachments.recording?.duration = duration
-                    self?.attachments.recording?.waveformSamples = samples
+
+            let url = await recorder.startRecording(token: token) { [weak self] duration, samples in
+                Task { @MainActor [weak self] in
+                    guard let self,
+                          generation == recordingGeneration,
+                          recordingToken == token else { return }
+                    attachments.recording?.duration = duration
+                    attachments.recording?.waveformSamples = samples
                 }
             }
-            if state == .waitingForRecordingPermission {
-                state = .isRecordingTap
+
+            guard generation == recordingGeneration,
+                  recordingToken == token,
+                  inputEnabled,
+                  !Task.isCancelled else {
+                await recorder.stopRecording(token: token)
+                RecordingFileStore.deleteIfOwned(url)
+                return
+            }
+
+            guard let url else {
+                attachments.recording = nil
+                state = .empty
+                recordingToken = nil
+                recordingStartTask = nil
+                return
             }
             attachments.recording?.url = url
+            if state == .waitingForRecordingPermission {
+                state = requestedState
+            }
+            recordingStartTask = nil
         }
+    }
+
+    private func invalidateRecordingStart() -> UUID? {
+        recordingGeneration += 1
+        recordingStartTask?.cancel()
+        recordingStartTask = nil
+        let token = recordingToken
+        recordingToken = nil
+        return token
     }
 }
 

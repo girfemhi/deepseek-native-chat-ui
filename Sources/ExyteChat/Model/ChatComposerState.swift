@@ -13,6 +13,10 @@ public final class ChatComposerState {
         inputViewModel = InputViewModel()
     }
 
+    init(inputViewModel: InputViewModel) {
+        self.inputViewModel = inputViewModel
+    }
+
     /// Cancels the SDK's pending submit task, stops recording and clears only
     /// ExyteChat-owned temporary recording files and in-memory draft state.
     public func discard() {

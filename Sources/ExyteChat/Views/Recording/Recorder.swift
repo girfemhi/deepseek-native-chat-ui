@@ -8,14 +8,23 @@
 import Foundation
 @preconcurrency import AVFoundation
 
-final actor Recorder {
+typealias RecordingProgressHandler = @Sendable (Double, [CGFloat]) -> Void
+
+protocol RecordingService: Actor {
+    var isAllowedToRecordAudio: Bool { get }
+    var isRecording: Bool { get }
+    func setRecorderSettings(_ recorderSettings: RecorderSettings)
+    func startRecording(token: UUID, durationProgressHandler: @escaping RecordingProgressHandler) async -> URL?
+    func stopRecording(token: UUID?)
+}
+
+final actor Recorder: RecordingService {
 
     // duration and waveform samples
-    typealias ProgressHandler = @Sendable (Double, [CGFloat]) -> Void
-
     private let audioSession = AVAudioSession()
     private var audioRecorder: AVAudioRecorder?
     private var recordingTask: Task<Void, Never>?
+    private var activeToken: UUID?
 
     private var soundSamples: [CGFloat] = []
     private var recorderSettings = RecorderSettings()
@@ -32,19 +41,20 @@ final actor Recorder {
         self.recorderSettings = recorderSettings
     }
 
-    func startRecording(durationProgressHandler: @escaping ProgressHandler) async -> URL? {
+    func startRecording(token: UUID, durationProgressHandler: @escaping RecordingProgressHandler) async -> URL? {
+        guard !Task.isCancelled else { return nil }
         if !isAllowedToRecordAudio {
             let granted = await audioSession.requestRecordPermission()
-            if granted {
-                return startRecordingInternal(durationProgressHandler)
-            }
-            return nil
-        } else {
-            return startRecordingInternal(durationProgressHandler)
+            guard granted, !Task.isCancelled else { return nil }
         }
+        guard !Task.isCancelled else { return nil }
+        return startRecordingInternal(token: token, durationProgressHandler)
     }
     
-    private func startRecordingInternal(_ durationProgressHandler: @escaping ProgressHandler) -> URL? {
+    private func startRecordingInternal(
+        token: UUID,
+        _ durationProgressHandler: @escaping RecordingProgressHandler
+    ) -> URL? {
         let settings: [String : Any] = [
             AVFormatIDKey: Int(recorderSettings.audioFormatID),
             AVSampleRateKey: recorderSettings.sampleRate,
@@ -68,6 +78,7 @@ final actor Recorder {
             try audioSession.overrideOutputAudioPort(.speaker)
             try audioSession.setActive(true)
             audioRecorder = try AVAudioRecorder(url: recordingUrl, settings: settings)
+            activeToken = token
             audioRecorder?.isMeteringEnabled = true
             audioRecorder?.record()
             durationProgressHandler(0.0, [])
@@ -83,12 +94,12 @@ final actor Recorder {
 
             return recordingUrl
         } catch {
-            stopRecording()
+            stopRecording(token: token)
             return nil
         }
     }
 
-    func onTimer(_ durationProgressHandler: @escaping ProgressHandler) {
+    func onTimer(_ durationProgressHandler: @escaping RecordingProgressHandler) {
         audioRecorder?.updateMeters()
         if let power = audioRecorder?.averagePower(forChannel: 0) {
             // power from 0 db (max) to -60 db (roughly min)
@@ -100,9 +111,11 @@ final actor Recorder {
         }
     }
 
-    func stopRecording() {
+    func stopRecording(token: UUID?) {
+        if let token, activeToken != token { return }
         audioRecorder?.stop()
         audioRecorder = nil
+        activeToken = nil
         recordingTask?.cancel()
         recordingTask = nil
     }
