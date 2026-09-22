@@ -70,14 +70,6 @@ enum PastedContentImporter {
     }
 
     private static func importProvider(_ item: SendableItemProvider) async -> ImportedPastePayload {
-#if DEBUG
-        NSLog(
-            "DSH_PASTE provider index=%ld registered=%@ hasFileURL=%d",
-            item.index,
-            item.provider.registeredTypeIdentifiers.joined(separator: ","),
-            item.provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) ? 1 : 0
-        )
-#endif
         if item.provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier),
            let result = await loadAndStageFileURL(item) {
             return result
@@ -87,14 +79,11 @@ enum PastedContentImporter {
         let attachmentType = types.first { isSpecificAttachmentType($0) }
             ?? types.first { $0.conforms(to: .image) || $0.conforms(to: .movie) }
             ?? types.first {
-            $0 != .fileURL
+                $0 != .fileURL
                     && $0.conforms(to: .data)
                     && !$0.conforms(to: .text)
                     && !$0.conforms(to: .url)
             }
-#if DEBUG
-        NSLog("DSH_PASTE provider index=%ld chosen=%@", item.index, attachmentType?.identifier ?? "none")
-#endif
         if let attachmentType,
            let staged = await loadAndStage(item, type: attachmentType),
            let result = makePayload(
@@ -114,42 +103,9 @@ enum PastedContentImporter {
 
     private static func loadAndStage(_ item: SendableItemProvider, type: UTType) async -> StagedFile? {
         await withCheckedContinuation { continuation in
-            item.provider.loadFileRepresentation(forTypeIdentifier: type.identifier) { url, error in
-#if DEBUG
-                let values = url.flatMap {
-                    try? $0.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-                }
-                let data = url.flatMap { try? Data(contentsOf: $0, options: [.mappedIfSafe]) }
-                let decoded = data.flatMap(decodeFileURLRepresentation)
-                let matches = decoded.map { representationMatchesSource($0, representationType: type) }
-                NSLog(
-                    "DSH_PASTE fileRepresentation type=%@ propertyList=%d url=%d regular=%d size=%lld bplist=%d legacy=%d matches=%d error=%ld",
-                    type.identifier,
-                    type.conforms(to: .propertyList) ? 1 : 0,
-                    url == nil ? 0 : 1,
-                    values?.isRegularFile == true ? 1 : 0,
-                    Int64(values?.fileSize ?? -1),
-                    data?.starts(with: Data("bplist00".utf8)) == true ? 1 : 0,
-                    decoded == nil ? 0 : 1,
-                    matches == true ? 1 : 0,
-                    Int64((error as NSError?)?.code ?? 0)
-                )
-#endif
+            item.provider.loadFileRepresentation(forTypeIdentifier: type.identifier) { url, _ in
                 guard let url else {
-                    item.provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { data, dataError in
-#if DEBUG
-                        let decoded = data.flatMap(decodeFileURLRepresentation)
-                        let matches = decoded.map { representationMatchesSource($0, representationType: type) }
-                        NSLog(
-                            "DSH_PASTE dataRepresentation type=%@ bytes=%lld bplist=%d legacy=%d matches=%d error=%ld",
-                            type.identifier,
-                            Int64(data?.count ?? -1),
-                            data?.starts(with: Data("bplist00".utf8)) == true ? 1 : 0,
-                            decoded == nil ? 0 : 1,
-                            matches == true ? 1 : 0,
-                            Int64((dataError as NSError?)?.code ?? 0)
-                        )
-#endif
+                    item.provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { data, _ in
                         guard let data else { continuation.resume(returning: nil); return }
                         if !type.conforms(to: .propertyList),
                            let source = decodeFileURLRepresentation(data),
@@ -182,20 +138,21 @@ enum PastedContentImporter {
 
     private static func loadAndStageFileURL(_ item: SendableItemProvider) async -> ImportedPastePayload? {
         await withCheckedContinuation { continuation in
-            item.provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { value, error in
-#if DEBUG
-                NSLog(
-                    "DSH_PASTE fileURL valueType=%@ error=%ld",
-                    value.map { String(reflecting: Swift.type(of: $0)) } ?? "nil",
-                    Int64((error as NSError?)?.code ?? 0)
-                )
-#endif
+            item.provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { value, _ in
                 if let url = value as? URL, url.isFileURL {
+                    let wrappedSource = isPropertyListFileURL(url)
+                        ? nil
+                        : legacyWrappedFileURL(from: url, representationType: .fileURL)
+                    if wrappedSource == nil, containsLegacyWrapperPayload(url) {
+                        continuation.resume(returning: nil)
+                        return
+                    }
+                    let source = wrappedSource ?? url
                     continuation.resume(returning: stageFile(
-                        at: url,
+                        at: source,
                         provider: item.provider,
-                        type: UTType(filenameExtension: url.pathExtension),
-                        fallbackFileName: url.lastPathComponent
+                        type: UTType(filenameExtension: source.pathExtension),
+                        fallbackFileName: source.lastPathComponent
                     ))
                     return
                 }
@@ -241,6 +198,10 @@ enum PastedContentImporter {
     }
 
     private static func legacyWrappedFileURL(from url: URL, representationType: UTType) -> URL? {
+        let accessedSecurityScope = url.startAccessingSecurityScopedResource()
+        defer {
+            if accessedSecurityScope { url.stopAccessingSecurityScopedResource() }
+        }
         guard !representationType.conforms(to: .propertyList),
               let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
               values.isRegularFile == true,
@@ -251,6 +212,26 @@ enum PastedContentImporter {
               let source = legacyFileURL(fromPropertyListData: data),
               representationMatchesSource(source, representationType: representationType) else { return nil }
         return source
+    }
+
+    private static func containsLegacyWrapperPayload(_ url: URL) -> Bool {
+        if isPropertyListFileURL(url) { return false }
+        let accessedSecurityScope = url.startAccessingSecurityScopedResource()
+        defer {
+            if accessedSecurityScope { url.stopAccessingSecurityScopedResource() }
+        }
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true,
+              let size = values.fileSize,
+              size <= 64 * 1_024,
+              let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else { return false }
+        return data.starts(with: Data("bplist00".utf8))
+    }
+
+    private static func isPropertyListFileURL(_ url: URL) -> Bool {
+        guard !url.pathExtension.isEmpty,
+              let sourceType = UTType(filenameExtension: url.pathExtension) else { return false }
+        return sourceType.conforms(to: .propertyList)
     }
 
     private static func isGenericRepresentation(_ type: UTType) -> Bool {

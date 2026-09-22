@@ -86,17 +86,7 @@ final class AttachmentPasteTextView: UITextView {
     var onPasteProviders: (([NSItemProvider], @escaping (String) -> Void) -> Void)?
 
     override func paste(_ sender: Any?) {
-        let pasteboard = UIPasteboard.general
-#if DEBUG
-        let urls = pasteboard.urls ?? []
-        NSLog(
-            "DSH_PASTE pasteboard hasURLs=%d urlCount=%ld allFileURLs=%d",
-            pasteboard.hasURLs ? 1 : 0,
-            urls.count,
-            !urls.isEmpty && urls.allSatisfy(\.isFileURL) ? 1 : 0
-        )
-#endif
-        let providers = pasteboard.itemProviders
+        let providers = UIPasteboard.general.itemProviders
         guard !providers.isEmpty,
               PastedContentImporter.containsAttachment(providers),
               let onPasteProviders else {

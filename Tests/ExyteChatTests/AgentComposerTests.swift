@@ -765,6 +765,54 @@ final class AgentComposerTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: payload.documents[0].0.url), Data("ephemeral".utf8))
     }
 
+    func testFileURLCallbackUnwrapsLegacyWrapperBeforeStagingPDF() async throws {
+        let source = FileManager.tempDirPath.appendingPathComponent("file-url-wrapper-source-\(UUID().uuidString).pdf")
+        let wrapper = FileManager.tempDirPath.appendingPathComponent("file-url-wrapper-\(UUID().uuidString)")
+        let expected = Data("%PDF-file-url-callback".utf8)
+        try expected.write(to: source)
+        let wrapperData = try PropertyListSerialization.data(
+            fromPropertyList: [source.absoluteString, "", [String: String]()],
+            format: .binary,
+            options: 0
+        )
+        try wrapperData.write(to: wrapper)
+        defer {
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: wrapper)
+        }
+        let provider = EphemeralFileURLItemProvider(source: wrapper)
+
+        let payload = await PastedContentImporter.importProviders([
+            SendableItemProvider(index: 0, provider: provider)
+        ])
+        defer { PastedContentImporter.deleteOwned(payload.ownedURLs) }
+
+        XCTAssertEqual(payload.documents.count, 1)
+        XCTAssertEqual(try Data(contentsOf: payload.documents[0].0.url), expected)
+        XCTAssertEqual(payload.documents[0].0.fileName, source.lastPathComponent)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+    }
+
+    func testFileURLCallbackPreservesActualPropertyListDocument() async throws {
+        let source = FileManager.tempDirPath.appendingPathComponent("actual-file-url-\(UUID().uuidString).plist")
+        let expected = try PropertyListSerialization.data(
+            fromPropertyList: ["file:///private/should-not-be-followed.pdf", "", [String: String]()],
+            format: .binary,
+            options: 0
+        )
+        try expected.write(to: source)
+        let provider = EphemeralFileURLItemProvider(source: source)
+
+        let payload = await PastedContentImporter.importProviders([
+            SendableItemProvider(index: 0, provider: provider)
+        ])
+        defer { PastedContentImporter.deleteOwned(payload.ownedURLs) }
+
+        XCTAssertEqual(payload.documents.count, 1)
+        XCTAssertEqual(payload.documents[0].0.fileName, source.lastPathComponent)
+        XCTAssertEqual(try Data(contentsOf: payload.documents[0].0.url), expected)
+    }
+
     func testPasteboardRoundTripFileProviderCopiesUnderlyingPDFBytes() async throws {
         let source = FileManager.tempDirPath.appendingPathComponent("示例交付清单-\(UUID().uuidString).pdf")
         var expected = Data("%PDF-1.7\n".utf8)
