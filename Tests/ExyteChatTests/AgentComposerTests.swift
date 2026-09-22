@@ -911,6 +911,40 @@ final class AgentComposerTests: XCTestCase {
         XCTAssertTrue(try Data(contentsOf: payload.documents[0].0.url).starts(with: Data("%PDF-".utf8)))
     }
 
+    func testSpecificFileRepresentationDoesNotStageWrapperWhenResolvedSourceIsMissing() async throws {
+        let missingSource = FileManager.tempDirPath.appendingPathComponent("missing-wrapper-source-\(UUID().uuidString).pdf")
+        let wrapper = FileManager.tempDirPath.appendingPathComponent("missing-wrapper-\(UUID().uuidString)")
+        let wrapperData = try PropertyListSerialization.data(
+            fromPropertyList: [missingSource.absoluteString, "", [String: String]()],
+            format: .binary,
+            options: 0
+        )
+        try wrapperData.write(to: wrapper)
+        defer { try? FileManager.default.removeItem(at: wrapper) }
+        let before = stagedPasteFilenames()
+        let provider = NSItemProvider()
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier, visibility: .all) { completion in
+            completion(nil, nil)
+            return nil
+        }
+        provider.registerFileRepresentation(
+            forTypeIdentifier: UTType.pdf.identifier,
+            fileOptions: [],
+            visibility: .all
+        ) { completion in
+            completion(wrapper, true, nil)
+            return nil
+        }
+
+        let payload = await PastedContentImporter.importProviders([
+            SendableItemProvider(index: 0, provider: provider)
+        ])
+
+        XCTAssertTrue(payload.documents.isEmpty)
+        XCTAssertTrue(payload.medias.isEmpty)
+        XCTAssertEqual(stagedPasteFilenames(), before)
+    }
+
     func testLegacyFileURLWrapperFromGenericDataCallbackCopiesPDF() async throws {
         let source = FileManager.tempDirPath.appendingPathComponent("legacy-data-source-\(UUID().uuidString).pdf")
         let expected = Data("%PDF-legacy-data-callback".utf8)

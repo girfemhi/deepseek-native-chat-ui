@@ -128,6 +128,12 @@ enum PastedContentImporter {
                 // DOCX, and so on). The decoder below validates that narrow schema and verifies the
                 // resolved source against the requested concrete type before following it.
                 let wrappedSource = legacyWrappedFileURL(from: url, representationType: type)
+                if wrappedSource == nil,
+                   !type.conforms(to: .propertyList),
+                   containsLegacyWrapperPayload(url) {
+                    continuation.resume(returning: nil)
+                    return
+                }
                 let source = wrappedSource ?? url
                 continuation.resume(returning: copyToOwnedStage(source, provider: item.provider, type: type).map {
                     StagedFile(url: $0, sourceFileName: wrappedSource?.lastPathComponent)
@@ -139,7 +145,8 @@ enum PastedContentImporter {
     private static func loadAndStageFileURL(_ item: SendableItemProvider) async -> ImportedPastePayload? {
         await withCheckedContinuation { continuation in
             item.provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { value, _ in
-                if let url = value as? URL, url.isFileURL {
+                let receivedURL = (value as? URL) ?? (value as? NSURL).map { $0 as URL }
+                if let url = receivedURL, url.isFileURL {
                     let wrappedSource = isPropertyListFileURL(url)
                         ? nil
                         : legacyWrappedFileURL(from: url, representationType: .fileURL)
