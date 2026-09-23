@@ -58,11 +58,11 @@ extension InputView {
                 sendButton
                     .disabled(!state.canSend || viewModel.sendDisabled || viewModel.isCommitting)
             } else {
-                recordButton
-                    .onTapGesture {
-                        onAction(.recordAudioTap)
-                    }
-                    .allowsHitTesting(viewModel.inputEnabled && !viewModel.isCommitting)
+                Button { onAction(.recordAudioTap) } label: { recordButton }
+                    .buttonStyle(.plain)
+                    .disabled(!viewModel.inputEnabled || viewModel.isCommitting)
+                    .accessibilityLabel(localization.startRecordingText)
+                    .accessibilityIdentifier("chat.record")
             }
         }
         .viewSize(actionButtonSize)
@@ -115,6 +115,8 @@ extension InputView {
                         .shadow(color: .black.opacity(0.4), radius: 1)
                 )
         }
+        .accessibilityLabel(localization.stopRecordingText)
+        .accessibilityIdentifier("chat.stop-recording")
     }
 
     var lockRecordButton: some View {

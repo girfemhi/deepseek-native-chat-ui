@@ -32,6 +32,8 @@ public struct ChatLocalization: Hashable, Sendable {
     public var openDocumentText: String
     public var addToConversationText: String
     public var photoLibraryText: String
+    public var startRecordingText: String
+    public var stopRecordingText: String
 
     public init(
         inputPlaceholder: String,
@@ -56,7 +58,9 @@ public struct ChatLocalization: Hashable, Sendable {
         openInMapsText: String = String(localized: "Open in Maps"),
         openDocumentText: String = String(localized: "Open"),
         addToConversationText: String = String(localized: "Add to conversation"),
-        photoLibraryText: String = String(localized: "Photo Library")
+        photoLibraryText: String = String(localized: "Photo Library"),
+        startRecordingText: String = String(localized: "Record audio"),
+        stopRecordingText: String = String(localized: "Stop recording")
     ) {
         self.inputPlaceholder = inputPlaceholder
         self.signatureText = signatureText
@@ -81,6 +85,8 @@ public struct ChatLocalization: Hashable, Sendable {
         self.openDocumentText = openDocumentText
         self.addToConversationText = addToConversationText
         self.photoLibraryText = photoLibraryText
+        self.startRecordingText = startRecordingText
+        self.stopRecordingText = stopRecordingText
     }
 
    public static var defaultLocalization: ChatLocalization {
@@ -136,7 +142,9 @@ public struct ChatLocalization: Hashable, Sendable {
             openInMapsText: "在地图中打开",
             openDocumentText: "打开文件",
             addToConversationText: "添加到对话",
-            photoLibraryText: "相册"
+            photoLibraryText: "相册",
+            startRecordingText: "开始录音",
+            stopRecordingText: "停止录音"
         )
     }
 }
