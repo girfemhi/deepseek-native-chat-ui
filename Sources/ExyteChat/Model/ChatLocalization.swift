@@ -32,6 +32,7 @@ public struct ChatLocalization: Hashable, Sendable {
     public var openDocumentText: String
     public var addToConversationText: String
     public var photoLibraryText: String
+    public var pasteFromClipboardText: String
     public var startRecordingText: String
     public var stopRecordingText: String
 
@@ -59,6 +60,7 @@ public struct ChatLocalization: Hashable, Sendable {
         openDocumentText: String = String(localized: "Open"),
         addToConversationText: String = String(localized: "Add to conversation"),
         photoLibraryText: String = String(localized: "Photo Library"),
+        pasteFromClipboardText: String = String(localized: "Add from Clipboard"),
         startRecordingText: String = String(localized: "Record audio"),
         stopRecordingText: String = String(localized: "Stop recording")
     ) {
@@ -85,6 +87,7 @@ public struct ChatLocalization: Hashable, Sendable {
         self.openDocumentText = openDocumentText
         self.addToConversationText = addToConversationText
         self.photoLibraryText = photoLibraryText
+        self.pasteFromClipboardText = pasteFromClipboardText
         self.startRecordingText = startRecordingText
         self.stopRecordingText = stopRecordingText
     }
@@ -113,7 +116,8 @@ public struct ChatLocalization: Hashable, Sendable {
             openInMapsText: String(localized: "Open in Maps"),
             openDocumentText: String(localized: "Open"),
             addToConversationText: String(localized: "Add to conversation"),
-            photoLibraryText: String(localized: "Photo Library")
+            photoLibraryText: String(localized: "Photo Library"),
+            pasteFromClipboardText: String(localized: "Add from Clipboard")
         )
     }
 
@@ -143,6 +147,7 @@ public struct ChatLocalization: Hashable, Sendable {
             openDocumentText: "打开文件",
             addToConversationText: "添加到对话",
             photoLibraryText: "相册",
+            pasteFromClipboardText: "从剪贴板添加",
             startRecordingText: "开始录音",
             stopRecordingText: "停止录音"
         )

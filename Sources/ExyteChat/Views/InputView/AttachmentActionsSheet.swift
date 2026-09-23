@@ -7,6 +7,7 @@ struct AttachmentActionsSheet: View {
     let availableInputs: [AvailableInputType]
     let localization: ChatLocalization
     let onAction: (InputViewAction) -> Void
+    let onPasteFromClipboard: () -> Void
 
     private var isMediaAvailable: Bool {
         availableInputs.contains(.media)
@@ -62,6 +63,40 @@ struct AttachmentActionsSheet: View {
                                 .fill(theme.colors.inputBG)
                         )
                     }
+
+                    Button {
+                        dismiss()
+                        Task { @MainActor in
+                            await Task.yield()
+                            onPasteFromClipboard()
+                        }
+                    } label: {
+                        HStack(spacing: 14) {
+                            Image(systemName: "doc.on.clipboard")
+                                .font(.system(size: 18, weight: .medium))
+                                .foregroundStyle(theme.colors.mainTint)
+                                .frame(width: 40, height: 40)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .fill(theme.colors.mainText.opacity(0.06))
+                                )
+                            Text(localization.pasteFromClipboardText)
+                                .font(.body)
+                                .foregroundStyle(theme.colors.mainText)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(theme.colors.mainCaptionText)
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: 58)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(theme.colors.inputBG)
+                    )
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
@@ -105,7 +140,7 @@ struct AttachmentActionsSheet: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.vertical, 8)
     }
 
     private func mediaTile(_ item: AttachmentSheetAction) -> some View {

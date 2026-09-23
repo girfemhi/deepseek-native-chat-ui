@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 import ExyteMediaPicker
 import AnchoredPopup
 
@@ -14,8 +15,6 @@ struct InputView: View {
     @Environment(\.chatTheme) var theme
     @Environment(\.mediaPickerTheme) var pickerTheme
     @Environment(\.chatSize) var chatSize
-    @Environment(\.colorScheme) private var colorScheme
-
     @EnvironmentObject var keyboardState: KeyboardState
     @EnvironmentObject var globalFocusState: GlobalFocusState
 
@@ -89,11 +88,13 @@ struct InputView: View {
                 AttachmentActionsSheet(
                     availableInputs: availableInputs,
                     localization: localization,
-                    onAction: onAction
+                    onAction: onAction,
+                    onPasteFromClipboard: pasteFromClipboard
                 )
                 .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.hidden)
-                .presentationCornerRadius(28)
+                .presentationDragIndicator(.visible)
+                .presentationContentInteraction(.resizes)
+                .presentationCornerRadius(30)
                 .presentationBackground(theme.colors.mainBG)
             }
             .onChange(of: viewModel.inputEnabled) { _, enabled in
@@ -174,17 +175,7 @@ struct InputView: View {
                 .padding(.bottom, 6)
             }
             .background {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(theme.colors.inputBG)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .stroke(theme.colors.mainText.opacity(0.08), lineWidth: 0.5)
-                    }
-                    .shadow(
-                        color: Color.black.opacity(colorScheme == .dark ? 0.16 : 0.06),
-                        radius: 2,
-                        y: 1
-                    )
+                ComposerSurface(color: theme.colors.inputBG)
             }
             .frameGetter($inputBarFrame)
             .padding(MessageView.horizontalScreenEdgePadding, 8)
@@ -330,7 +321,7 @@ struct InputView: View {
                     if isEditorial {
                         Image(systemName: "arrow.up")
                             .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(Color.white)
+                            .foregroundStyle(theme.colors.mainBG)
                             .viewSize(actionButtonSize)
                             .background(Circle().fill(theme.colors.sendButtonBackground))
                     } else {
@@ -343,6 +334,20 @@ struct InputView: View {
         }
         .disabled(viewModel.sendDisabled || viewModel.isCommitting || (!state.canSend && !viewModel.isImportingPaste))
         .opacity(viewModel.sendDisabled || viewModel.isCommitting || (!state.canSend && !viewModel.isImportingPaste) ? 0.42 : 1)
+    }
+
+    private func pasteFromClipboard() {
+        let providers = UIPasteboard.general.itemProviders
+        guard !providers.isEmpty else { return }
+        viewModel.stagePastedProviders(providers) { fragment in
+            guard !fragment.isEmpty else { return }
+            if viewModel.text.isEmpty {
+                viewModel.text = fragment
+            } else {
+                let separator = viewModel.text.last?.isWhitespace == true ? "" : "\n"
+                viewModel.text += separator + fragment
+            }
+        }
     }
 
     var addButton: some View {
@@ -399,6 +404,7 @@ struct InputView: View {
 
 private struct ComposerSurface: View {
     let color: Color
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if #available(iOS 26.0, *) {
@@ -406,8 +412,17 @@ private struct ComposerSurface: View {
                 .glassEffect(.regular, in: .rect(cornerRadius: 22))
                 .overlay {
                     RoundedRectangle(cornerRadius: 22)
-                        .fill(color.opacity(0.34))
+                        .fill(color.opacity(0.20))
                 }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 22)
+                        .stroke(Color.white.opacity(0.14), lineWidth: 0.6)
+                }
+                .shadow(
+                    color: Color.black.opacity(colorScheme == .dark ? 0.18 : 0.08),
+                    radius: colorScheme == .dark ? 8 : 12,
+                    y: colorScheme == .dark ? 3 : 5
+                )
         } else {
             RoundedRectangle(cornerRadius: 22)
                 .fill(.regularMaterial)
