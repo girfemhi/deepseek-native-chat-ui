@@ -104,6 +104,32 @@ public struct ChatView<MessageContent: View, InputViewContent: View, MenuAction:
     @State private var giphyConfigured = false
     @State private var selectedGiphyMedia: GPHMedia? = nil
     @State private var chatSize: CGSize = .zero
+    @State private var editorialInputSize: CGSize = .zero
+
+    private var resolvedInputLayout: InputViewLayout {
+        inputViewCustomizationParameters.inputLayout ?? theme.style.inputLayout
+    }
+
+    private var usesFloatingEditorialInput: Bool {
+        chatCustomizationParameters.isListAboveInputView
+            && resolvedInputLayout == .editorial
+    }
+
+    private var editorialInputClearance: CGFloat {
+        guard usesFloatingEditorialInput else { return 0 }
+        // The initial floor prevents a one-frame overlap before SwiftUI reports
+        // the first measured size. Reply, recording and attachment states then
+        // replace it with their actual expanded height.
+        return max(98, editorialInputSize.height) + 8
+    }
+
+    private var effectiveChatCustomizationParameters: ChatCustomizationParameters {
+        ComposerOverlayLayout.parameters(
+            from: chatCustomizationParameters,
+            type: type,
+            bottomClearance: editorialInputClearance
+        )
+    }
 
     /// the system picker only handles photo/video library browsing, not camera capture,
     /// so camera requests always fall through to the ExyteMediaPicker
@@ -144,7 +170,20 @@ public struct ChatView<MessageContent: View, InputViewContent: View, MenuAction:
                 waitingForNetwork
             }
 
-            if chatCustomizationParameters.isListAboveInputView {
+            if usesFloatingEditorialInput {
+                ZStack(alignment: .bottom) {
+                    listWithButton
+
+                    VStack(spacing: 0) {
+                        if let builder = betweenListAndInputViewBuilder {
+                            builder()
+                        }
+                        inputView
+                    }
+                    .frame(maxWidth: .infinity)
+                    .sizeGetter($editorialInputSize)
+                }
+            } else if chatCustomizationParameters.isListAboveInputView {
                 listWithButton
                 if let builder = betweenListAndInputViewBuilder {
                     builder()
@@ -351,7 +390,7 @@ public struct ChatView<MessageContent: View, InputViewContent: View, MenuAction:
                             .shadow(color: .primary.opacity(0.1), radius: 2, y: 1)
                     }
                     .padding(.trailing, MessageView.horizontalScreenEdgePadding)
-                    .padding(.bottom, 8)
+                    .padding(.bottom, 8 + editorialInputClearance)
                 }
             }
             
@@ -386,7 +425,7 @@ public struct ChatView<MessageContent: View, InputViewContent: View, MenuAction:
 
             // MARK: - Customization
 
-            chatParams: chatCustomizationParameters,
+            chatParams: effectiveChatCustomizationParameters,
             messageParams: messageCustomizationParameters
         )
         .applyIf(!chatCustomizationParameters.isScrollEnabled) {
@@ -625,6 +664,25 @@ public struct ChatView<MessageContent: View, InputViewContent: View, MenuAction:
     
     private func isGiphyAvailable() -> Bool {
         inputViewCustomizationParameters.availableInputs.contains(AvailableInputType.giphy)
+    }
+}
+
+enum ComposerOverlayLayout {
+    static func parameters(
+        from base: ChatCustomizationParameters,
+        type: ChatType,
+        bottomClearance: CGFloat
+    ) -> ChatCustomizationParameters {
+        guard bottomClearance > 0 else { return base }
+        var value=base
+        let clearance=max(0,bottomClearance)
+        // Conversation tables are rotated by π: their visual bottom maps to
+        // UITableView.contentInset.top. Comments are not inverted.
+        switch type {
+        case .conversation: value.contentInsets.top += clearance
+        case .comments: value.contentInsets.bottom += clearance
+        }
+        return value
     }
 }
 

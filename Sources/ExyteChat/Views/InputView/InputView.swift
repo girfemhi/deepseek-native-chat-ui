@@ -74,7 +74,7 @@ struct InputView: View {
 
     var body: some View {
         inputLayout
-            .background(backgroundColor)
+            .background(isEditorial ? Color.clear : backgroundColor)
             .disabled(!viewModel.inputEnabled)
             .opacity(viewModel.inputEnabled ? 1 : 0.55)
             .onAppear {
@@ -405,9 +405,10 @@ struct InputView: View {
 private struct ComposerSurface: View {
     let color: Color
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, *), !reduceTransparency {
             Color.clear
                 .glassEffect(.regular, in: .rect(cornerRadius: 22))
                 .overlay {
@@ -424,11 +425,17 @@ private struct ComposerSurface: View {
                     y: colorScheme == .dark ? 3 : 5
                 )
         } else {
-            RoundedRectangle(cornerRadius: 22)
-                .fill(.regularMaterial)
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(reduceTransparency ? color : Color.clear)
+                .background {
+                    if !reduceTransparency {
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .fill(.regularMaterial)
+                    }
+                }
                 .overlay {
                     RoundedRectangle(cornerRadius: 22)
-                        .fill(color.opacity(0.72))
+                        .fill(color.opacity(reduceTransparency ? 1 : 0.72))
                 }
         }
     }

@@ -680,6 +680,29 @@ final class AgentComposerTests: XCTestCase {
         XCTAssertEqual(editorial.inputViewCustomizationParameters.inputLayout, .editorial)
     }
 
+    func testEditorialOverlayMapsVisualBottomClearanceForInvertedConversation() {
+        var base = ChatCustomizationParameters()
+        base.contentInsets = UIEdgeInsets(top: 7, left: 2, bottom: 11, right: 3)
+
+        let conversation = ComposerOverlayLayout.parameters(
+            from: base,
+            type: .conversation,
+            bottomClearance: 108
+        )
+        XCTAssertEqual(conversation.contentInsets, UIEdgeInsets(top: 115, left: 2, bottom: 11, right: 3))
+
+        let comments = ComposerOverlayLayout.parameters(
+            from: base,
+            type: .comments,
+            bottomClearance: 108
+        )
+        XCTAssertEqual(comments.contentInsets, UIEdgeInsets(top: 7, left: 2, bottom: 119, right: 3))
+        XCTAssertEqual(
+            ComposerOverlayLayout.parameters(from: base, type: .conversation, bottomClearance: 0).contentInsets,
+            base.contentInsets
+        )
+    }
+
     func testAttachmentSheetActionsReuseExistingPickerRoutes() {
         let model = InputViewModel()
         let action = model.inputViewAction()

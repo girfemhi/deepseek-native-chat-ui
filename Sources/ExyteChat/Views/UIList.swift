@@ -83,7 +83,14 @@ struct UIList<MessageContent: View>: UIViewRepresentable {
         }
 
         if tableView.contentInset != chatParams.contentInsets {
+            let wasPinnedToNewest = type == .conversation && tableView.contentOffset.y <= 1
             tableView.contentInset = chatParams.contentInsets
+            tableView.scrollIndicatorInsets = chatParams.contentInsets
+            if wasPinnedToNewest {
+                // A changing composer height must not push a user who is
+                // already following the newest turn away from the bottom.
+                tableView.setContentOffset(.zero, animated: false)
+            }
         }
 
         context.coordinator.chatParams = chatParams
