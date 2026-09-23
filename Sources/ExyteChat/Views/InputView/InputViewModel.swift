@@ -65,6 +65,11 @@ final class InputViewModel: ObservableObject {
     private var recordingStartTask: Task<Void, Never>?
     private var recordingGeneration = 0
     private var recordingToken: UUID?
+    /// A recorder URL is mutable until `stopRecording` returns. Publishing that
+    /// URL as a draft while AVAudioRecorder is still writing makes hosts race a
+    /// size/hash copy against the writer. Keep the change unpublished until the
+    /// matching finalization completes.
+    private var recordingFinalizationGeneration: Int?
     private var retainedOwnedRecordingURLs: Set<URL> = []
     private var recordingStopTask: Task<Void, Never>?
     private var unmountFinalizationTask: Task<ChatComposerFinalization, Never>?
@@ -140,14 +145,18 @@ final class InputViewModel: ObservableObject {
         if [.isRecordingTap, .isRecordingHold, .waitingForRecordingPermission].contains(state) {
             let token = invalidateRecordingStart()
             let generation = recordingGeneration
+            recordingFinalizationGeneration = generation
             Task {
                 await recorder.stopRecording(token: token)
                 await recordingPlayer?.reset()
+                guard recordingFinalizationGeneration == generation else { return }
+                recordingFinalizationGeneration = nil
                 guard generation == recordingGeneration else { return }
                 if attachments.recording?.url == nil {
                     attachments.recording = nil
                 }
                 state = attachments.recording == nil ? .empty : .hasRecording
+                publishFinalizedRecordingIfNeeded()
             }
         }
         cancelPasteImport()
@@ -279,11 +288,14 @@ final class InputViewModel: ObservableObject {
     private func stopRecordingForSuspension() async {
         let token = invalidateRecordingStart()
         let generation = recordingGeneration
+        recordingFinalizationGeneration = generation
         let revisionBeforeStop = draftRevision
         let finalizedActiveRecording = token != nil && attachments.recording?.url != nil
         var draftContentChanged = false
         await recorder.stopRecording(token: token)
         await recordingPlayer?.reset()
+        guard recordingFinalizationGeneration == generation else { return }
+        recordingFinalizationGeneration = nil
 
         if generation == recordingGeneration {
             if let recording = attachments.recording, recording.url == nil {
@@ -327,10 +339,14 @@ final class InputViewModel: ObservableObject {
         submissionEpoch += 1
         let epoch = submissionEpoch
         let recordingToken = invalidateRecordingStart()
+        let recordingFinalization = recordingGeneration
+        recordingFinalizationGeneration = recordingFinalization
         submissionTask = Task { @MainActor [weak self] in
             guard let self else { return }
             await recorder.stopRecording(token: recordingToken)
             await recordingPlayer?.reset()
+            guard recordingFinalizationGeneration == recordingFinalization else { return }
+            recordingFinalizationGeneration = nil
             guard epoch == submissionEpoch, !Task.isCancelled else { return }
             await sendMessage(epoch: epoch)
         }
@@ -444,8 +460,11 @@ final class InputViewModel: ObservableObject {
         case .stopRecordAudio:
             let token = invalidateRecordingStart()
             let generation = recordingGeneration
+            recordingFinalizationGeneration = generation
             Task {
                 await recorder.stopRecording(token: token)
+                guard recordingFinalizationGeneration == generation else { return }
+                recordingFinalizationGeneration = nil
                 guard generation == recordingGeneration else { return }
                 if attachments.recording?.url != nil {
                     state = .hasRecording
@@ -454,6 +473,7 @@ final class InputViewModel: ObservableObject {
                     state = .empty
                 }
                 await recordingPlayer?.reset()
+                publishFinalizedRecordingIfNeeded()
             }
         case .deleteRecord:
             let recordingURL = attachments.recording?.url
@@ -549,11 +569,25 @@ final class InputViewModel: ObservableObject {
 
     private func invalidateRecordingStart() -> UUID? {
         recordingGeneration += 1
+        recordingFinalizationGeneration = nil
         recordingStartTask?.cancel()
         recordingStartTask = nil
         let token = recordingToken
         recordingToken = nil
         return token
+    }
+
+    private var recordingSourceIsMutable: Bool {
+        recordingToken != nil || recordingFinalizationGeneration != nil
+    }
+
+    /// Stopping does not mutate the `Recording` value, so Combine has no final
+    /// attachment event to publish. Advance the draft revision once and emit a
+    /// snapshot only after the writer has closed the file.
+    private func publishFinalizedRecordingIfNeeded() {
+        guard attachments.recording?.url != nil else { return }
+        draftRevision += 1
+        flushDraftChange(force: true)
     }
 }
 
@@ -668,6 +702,7 @@ private extension InputViewModel {
     @discardableResult
     func flushDraftChange(force: Bool = false) -> DraftMessage? {
         guard !isRestoringInitialDraft,
+              !recordingSourceIsMutable,
               (force || draftRevision != lastPublishedDraftRevision),
               let onDraftChange else { return nil }
 

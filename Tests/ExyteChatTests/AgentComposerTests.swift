@@ -182,6 +182,35 @@ final class AgentComposerTests: XCTestCase {
         await waitUntil { !FileManager.default.fileExists(atPath: ownedURL.path) }
     }
 
+    func testActiveRecordingProgressIsPublishedOnlyAfterRecorderStops() async throws {
+        let recorder = SuspendedRecordingService()
+        let state = ChatComposerState(inputViewModel: InputViewModel(recorder: recorder))
+        let model = state.inputViewModel
+        let ownedURL = RecordingFileStore.makeURL(fileExtension: ".m4a")
+        try Data("recorded".utf8).write(to: ownedURL)
+        var snapshots: [DraftMessage] = []
+        model.onDraftChange = { snapshots.append($0) }
+        model.onStart()
+
+        model.inputViewAction()(.recordAudioTap)
+        await waitUntilAsync { await recorder.hasPendingStart }
+        await recorder.releaseStart(with: ownedURL)
+        await waitUntil { model.attachments.recording?.url == ownedURL }
+        await recorder.emitProgress(duration: 3, samples: [0.1, 0.7, 0.3])
+        try await Task.sleep(for: .milliseconds(180))
+
+        XCTAssertFalse(snapshots.contains { $0.recording?.url == ownedURL }, "a mutable recorder URL must not escape through onDraftChange")
+
+        model.inputViewAction()(.stopRecordAudio)
+        await waitUntilAsync { !(await recorder.isRecording) }
+        await waitUntil { snapshots.last?.recording?.url == ownedURL }
+
+        XCTAssertEqual(snapshots.last?.recording?.duration, 3)
+        XCTAssertEqual(snapshots.last?.recording?.waveformSamples, [0.1, 0.7, 0.3])
+        state.discard()
+        await waitUntil { !FileManager.default.fileExists(atPath: ownedURL.path) }
+    }
+
     func testLastMountStopSynchronouslyPublishesTailBeforeImmediateDiscard() {
         let state = ChatComposerState()
         let model = state.inputViewModel
@@ -1507,6 +1536,7 @@ private actor SuspendedRecordingService: RecordingService {
     private var pendingToken: UUID?
     private var activeToken: UUID?
     private var continuation: CheckedContinuation<URL?, Never>?
+    private var progressHandler: RecordingProgressHandler?
 
     var isAllowedToRecordAudio: Bool { true }
     var isRecording: Bool { activeToken != nil }
@@ -1519,6 +1549,7 @@ private actor SuspendedRecordingService: RecordingService {
         durationProgressHandler: @escaping RecordingProgressHandler
     ) async -> URL? {
         pendingToken = token
+        progressHandler = durationProgressHandler
         return await withCheckedContinuation { continuation = $0 }
     }
 
@@ -1532,6 +1563,11 @@ private actor SuspendedRecordingService: RecordingService {
     func stopRecording(token: UUID?) {
         guard token == nil || activeToken == token else { return }
         activeToken = nil
+        progressHandler = nil
+    }
+
+    func emitProgress(duration: Double, samples: [CGFloat]) {
+        progressHandler?(duration, samples)
     }
 }
 
