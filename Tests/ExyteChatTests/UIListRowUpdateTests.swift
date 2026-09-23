@@ -63,6 +63,24 @@ final class UIListRowUpdateTests: XCTestCase {
         XCTAssertNil(RowUpdatePlan.make(oldSections: baseline, newSections: reordered, showsLastReadIndicator: false))
     }
 
+    func testPlanIncludesEveryChangedRowForOffscreenCacheInvalidation() throws {
+        let oldMessages = (0..<100).map { message("\($0)", "old \($0)") }
+        var newMessages = oldMessages
+        newMessages[0] = message("0", "new first")
+        newMessages[99] = message("99", "new last")
+
+        let plan = try XCTUnwrap(RowUpdatePlan.make(
+            oldSections: [section(messages: oldMessages)],
+            newSections: [section(messages: newMessages)],
+            showsLastReadIndicator: false
+        ))
+
+        XCTAssertEqual(plan.changedIndexPaths, [
+            IndexPath(row: 0, section: 0),
+            IndexPath(row: 99, section: 0)
+        ])
+    }
+
     private func message(_ id: String, _ text: String, status: Message.Status? = nil) -> Message {
         Message(id: id, user: user, status: status, createdAt: date, text: text)
     }
@@ -96,7 +114,7 @@ final class UpdateQueueCoalescingTests: XCTestCase {
         await waitUntil { await queue.pendingJobCountForTesting() == 1 }
 
         for value in 1...100 {
-            await queue.createCoalescingJob(key: "stream") {
+            await queue.createCoalescingJob(key: "stream", sequence: value) {
                 await recorder.append(value)
             }
         }
@@ -116,9 +134,9 @@ final class UpdateQueueCoalescingTests: XCTestCase {
 
         await queue.createJob { await gate.block() }
         await waitUntil { await queue.pendingJobCountForTesting() == 1 }
-        await queue.createCoalescingJob(key: "stream") { await recorder.append(1) }
+        await queue.createCoalescingJob(key: "stream", sequence: 1) { await recorder.append(1) }
         await queue.createJob { await recorder.append(2) }
-        await queue.createCoalescingJob(key: "stream") { await recorder.append(3) }
+        await queue.createCoalescingJob(key: "stream", sequence: 3) { await recorder.append(3) }
         await waitUntil { await queue.pendingJobCountForTesting() == 4 }
 
         await gate.release()
@@ -147,7 +165,7 @@ final class UpdateQueueCoalescingTests: XCTestCase {
             waiters.append(waiter)
             await waitUntil { await queue.orphanTransactionWaiterCountForTesting() == 1 }
             await queue.markRealUpdate()
-            await queue.createCoalescingJob(key: "stream") {
+            await queue.createCoalescingJob(key: "stream", sequence: value) {
                 await executedWork.append(value)
             }
         }
@@ -162,6 +180,40 @@ final class UpdateQueueCoalescingTests: XCTestCase {
         let completedValues = await completedTransactions.snapshot().sorted()
         XCTAssertEqual(workValues, [3])
         XCTAssertEqual(completedValues, [1, 2, 3])
+    }
+
+    func testLateOlderSequenceCannotOverwriteNewerPendingWork() async {
+        let queue = UpdateQueue()
+        let gate = QueueTestGate()
+        let recorder = QueueTestRecorder()
+        let completedTransactions = QueueTestRecorder()
+
+        await queue.createJob { await gate.block() }
+        await waitUntil { await queue.pendingJobCountForTesting() == 1 }
+
+        await queue.createCoalescingJob(key: "stream", sequence: 2) {
+            await recorder.append(2)
+        }
+        await queue.startTransaction(animationMode: .none)
+        let olderWaiter = Task {
+            await queue.waitForTransactionToFinish()
+            await completedTransactions.append(1)
+        }
+        await waitUntil { await queue.orphanTransactionWaiterCountForTesting() == 1 }
+        await queue.markRealUpdate()
+        await queue.createCoalescingJob(key: "stream", sequence: 1) {
+            await recorder.append(1)
+        }
+        await waitUntil { await queue.pendingJobCountForTesting() == 2 }
+
+        await gate.release()
+        await olderWaiter.value
+        await waitUntil { await queue.pendingJobCountForTesting() == 0 }
+
+        let values = await recorder.snapshot()
+        let completedValues = await completedTransactions.snapshot()
+        XCTAssertEqual(values, [2])
+        XCTAssertEqual(completedValues, [1])
     }
 
     private func waitUntil(

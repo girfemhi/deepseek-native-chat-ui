@@ -21,6 +21,7 @@ actor UpdateQueue {
         var work: @Sendable @MainActor () async -> Void
         var transactionContinuations: [CheckedContinuation<Void, Never>]
         let coalescingKey: String?
+        var coalescingSequence: Int?
     }
 
     private struct PendingTransaction {
@@ -98,13 +99,15 @@ actor UpdateQueue {
     /// the newest work completes.
     func createCoalescingJob(
         key: String,
+        sequence: Int,
         _ work: @escaping @Sendable @MainActor () async -> Void
     ) {
-        createJob(coalescingKey: key, work)
+        createJob(coalescingKey: key, coalescingSequence: sequence, work)
     }
 
     private func createJob(
         coalescingKey: String?,
+        coalescingSequence: Int? = nil,
         _ work: @escaping @Sendable @MainActor () async -> Void
     ) {
         var transactionContinuation: CheckedContinuation<Void, Never>? = nil
@@ -116,15 +119,20 @@ actor UpdateQueue {
 
         if let coalescingKey,
            queue.last?.coalescingKey == coalescingKey {
-            queue[queue.count - 1].work = work
+            let tailIndex = queue.count - 1
+            if (coalescingSequence ?? .min) >= (queue[tailIndex].coalescingSequence ?? .min) {
+                queue[tailIndex].work = work
+                queue[tailIndex].coalescingSequence = coalescingSequence
+            }
             if let transactionContinuation {
-                queue[queue.count - 1].transactionContinuations.append(transactionContinuation)
+                queue[tailIndex].transactionContinuations.append(transactionContinuation)
             }
         } else {
             queue.append(Job(
                 work: work,
                 transactionContinuations: transactionContinuation.map { [$0] } ?? [],
-                coalescingKey: coalescingKey
+                coalescingKey: coalescingKey,
+                coalescingSequence: coalescingSequence
             ))
         }
 

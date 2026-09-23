@@ -178,7 +178,11 @@ struct UIList<MessageContent: View>: UIViewRepresentable {
             }
 
             if canCoalesceContentUpdate {
-                await updateQueue.createCoalescingJob(key: "message-content", work)
+                await updateQueue.createCoalescingJob(
+                    key: "message-content",
+                    sequence: revision,
+                    work
+                )
             } else {
                 await updateQueue.createJob(work)
             }
@@ -325,8 +329,7 @@ struct UIList<MessageContent: View>: UIViewRepresentable {
         _ coordinator: Coordinator,
         plan: RowUpdatePlan
     ) {
-        let visibleRows = Set(tableView.indexPathsForVisibleRows ?? [])
-        let changedVisibleRows = plan.changedIndexPaths.filter(visibleRows.contains)
+        let changedRows = plan.changedIndexPaths
         let wasPinnedToNewest = type == .conversation && tableView.contentOffset.y <= 1
         let anchor = contentUpdateAnchor(
             tableView,
@@ -336,12 +339,15 @@ struct UIList<MessageContent: View>: UIViewRepresentable {
 
         coordinator.sections = sections
 
-        guard !changedVisibleRows.isEmpty else { return }
+        guard !changedRows.isEmpty else { return }
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         UIView.performWithoutAnimation {
-            tableView.reconfigureRows(at: changedVisibleRows)
+            // Let UITableView invalidate visible, prefetched and cached rows.
+            // Filtering to the current viewport can leave an offscreen
+            // streaming row with stale content or a stale self-sized height.
+            tableView.reconfigureRows(at: changedRows)
             tableView.beginUpdates()
             tableView.endUpdates()
             tableView.layoutIfNeeded()
