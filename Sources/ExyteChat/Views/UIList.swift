@@ -83,13 +83,24 @@ struct UIList<MessageContent: View>: UIViewRepresentable {
         }
 
         if tableView.contentInset != chatParams.contentInsets {
-            let wasPinnedToNewest = type == .conversation && tableView.contentOffset.y <= 1
+            let wasPinnedToNewest = type == .conversation && UIListScrollGeometry.isAtNewest(
+                offset: tableView.contentOffset.y,
+                adjustedTopInset: tableView.adjustedContentInset.top
+            )
             tableView.contentInset = chatParams.contentInsets
             tableView.scrollIndicatorInsets = chatParams.contentInsets
             if wasPinnedToNewest {
                 // A changing composer height must not push a user who is
                 // already following the newest turn away from the bottom.
-                tableView.setContentOffset(.zero, animated: false)
+                tableView.setContentOffset(
+                    CGPoint(
+                        x: tableView.contentOffset.x,
+                        y: UIListScrollGeometry.newestOffset(
+                            adjustedTopInset: tableView.adjustedContentInset.top
+                        )
+                    ),
+                    animated: false
+                )
             }
         }
 
@@ -138,7 +149,10 @@ struct UIList<MessageContent: View>: UIViewRepresentable {
                         || context.coordinator.sections.isEmpty
                         || pendingScrollTo != nil { // if we're gonna scroll later, then update cells without animation, and animate scrolling later
                         updateTableNoAnimation(tableView, context.coordinator)
-                    } else if animationMode == .natural, tableView.contentOffset == .zero {
+                    } else if animationMode == .natural, UIListScrollGeometry.isAtNewest(
+                        offset: tableView.contentOffset.y,
+                        adjustedTopInset: tableView.adjustedContentInset.top
+                    ) {
                         await updateTableWithAnimation(tableView, context.coordinator)
                     } else {
                         // if transaction.animationMode == .keepStable
@@ -205,7 +219,15 @@ struct UIList<MessageContent: View>: UIViewRepresentable {
         case .tableOffset(let offset):
             tableView.setContentOffset(CGPoint(x: 0, y: offset), animated: false)
         case .newestMessage:
-            tableView.setContentOffset(CGPoint(x: 0, y: 0), animated: false)
+            tableView.setContentOffset(
+                CGPoint(
+                    x: tableView.contentOffset.x,
+                    y: UIListScrollGeometry.newestOffset(
+                        adjustedTopInset: tableView.adjustedContentInset.top
+                    )
+                ),
+                animated: false
+            )
         case .oldestMessage:
             // An empty table has no section 0 to ask about: clamping the index
             // to 0 makes numberOfRows(inSection:) raise
@@ -337,7 +359,10 @@ struct UIList<MessageContent: View>: UIViewRepresentable {
         plan: RowUpdatePlan
     ) {
         let changedRows = plan.changedIndexPaths
-        let wasPinnedToNewest = type == .conversation && tableView.contentOffset.y <= 1
+        let wasPinnedToNewest = type == .conversation && UIListScrollGeometry.isAtNewest(
+            offset: tableView.contentOffset.y,
+            adjustedTopInset: tableView.adjustedContentInset.top
+        )
         let anchor = contentUpdateAnchor(
             tableView,
             coordinator: coordinator,
@@ -361,7 +386,15 @@ struct UIList<MessageContent: View>: UIViewRepresentable {
         }
 
         if wasPinnedToNewest {
-            tableView.setContentOffset(.zero, animated: false)
+            tableView.setContentOffset(
+                CGPoint(
+                    x: tableView.contentOffset.x,
+                    y: UIListScrollGeometry.newestOffset(
+                        adjustedTopInset: tableView.adjustedContentInset.top
+                    )
+                ),
+                animated: false
+            )
         } else if let anchor,
                   let newIndexPath = indexPath(
                     for: anchor.messageID,
@@ -898,11 +931,28 @@ struct UIList<MessageContent: View>: UIViewRepresentable {
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             let contentOffset = scrollView.contentOffset.y
-            let maxTopOffset = scrollView.contentSize.height - scrollView.frame.height - 1
+            let newestOffset=UIListScrollGeometry.newestOffset(
+                adjustedTopInset: scrollView.adjustedContentInset.top
+            )
+            let oldestOffset=UIListScrollGeometry.oldestOffset(
+                contentHeight: scrollView.contentSize.height,
+                viewportHeight: scrollView.frame.height,
+                adjustedTopInset: scrollView.adjustedContentInset.top,
+                adjustedBottomInset: scrollView.adjustedContentInset.bottom
+            )
 
             chatParams.onContentOffsetChange?(contentOffset)
-            isScrolledToBottom = contentOffset <= 0
-            isScrolledToTop = contentOffset >= maxTopOffset
+            isScrolledToBottom = UIListScrollGeometry.isAtNewest(
+                offset: contentOffset,
+                adjustedTopInset: scrollView.adjustedContentInset.top
+            )
+            isScrolledToTop = UIListScrollGeometry.isAtOldest(
+                offset: contentOffset,
+                contentHeight: scrollView.contentSize.height,
+                viewportHeight: scrollView.frame.height,
+                adjustedTopInset: scrollView.adjustedContentInset.top,
+                adjustedBottomInset: scrollView.adjustedContentInset.bottom
+            )
 
             guard !sections.isEmpty, !updateInProgress else { return }
 
@@ -910,7 +960,7 @@ struct UIList<MessageContent: View>: UIViewRepresentable {
                let handler = chatParams.olderMessagesPaginationHandler,
                handler.hasMoreToLoad,
                case let .pixels(offset) = handler.triggerType,
-               contentOffset >= maxTopOffset,
+               contentOffset >= oldestOffset - UIListScrollGeometry.tolerance,
                let tableView = scrollView as? UITableView {
                 performOlderPagination(tableView)
             }
@@ -921,7 +971,7 @@ struct UIList<MessageContent: View>: UIViewRepresentable {
                let handler = chatParams.newerMessagesPaginationHandler,
                handler.hasMoreToLoad,
                case let .pixels(offset) = handler.triggerType,
-               contentOffset <= offset,
+               contentOffset - newestOffset <= offset,
                let tableView = scrollView as? UITableView {
                 performNewerPagination(tableView)
             }
@@ -971,6 +1021,50 @@ struct UIList<MessageContent: View>: UIViewRepresentable {
         }
         res += String("}")
         return res
+    }
+}
+
+enum UIListScrollGeometry {
+    static let tolerance:CGFloat=1
+
+    static func newestOffset(adjustedTopInset:CGFloat)->CGFloat {
+        -adjustedTopInset
+    }
+
+    static func oldestOffset(
+        contentHeight:CGFloat,
+        viewportHeight:CGFloat,
+        adjustedTopInset:CGFloat,
+        adjustedBottomInset:CGFloat
+    )->CGFloat {
+        max(
+            newestOffset(adjustedTopInset:adjustedTopInset),
+            contentHeight-viewportHeight+adjustedBottomInset
+        )
+    }
+
+    static func isAtNewest(
+        offset:CGFloat,
+        adjustedTopInset:CGFloat,
+        tolerance:CGFloat=tolerance
+    )->Bool {
+        offset <= newestOffset(adjustedTopInset:adjustedTopInset)+tolerance
+    }
+
+    static func isAtOldest(
+        offset:CGFloat,
+        contentHeight:CGFloat,
+        viewportHeight:CGFloat,
+        adjustedTopInset:CGFloat,
+        adjustedBottomInset:CGFloat,
+        tolerance:CGFloat=tolerance
+    )->Bool {
+        offset >= oldestOffset(
+            contentHeight:contentHeight,
+            viewportHeight:viewportHeight,
+            adjustedTopInset:adjustedTopInset,
+            adjustedBottomInset:adjustedBottomInset
+        )-tolerance
     }
 }
 

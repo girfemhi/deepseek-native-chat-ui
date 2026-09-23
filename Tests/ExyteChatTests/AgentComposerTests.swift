@@ -703,6 +703,32 @@ final class AgentComposerTests: XCTestCase {
         )
     }
 
+    func testInvertedConversationNewestBoundaryIncludesAdjustedTopInset() {
+        XCTAssertEqual(UIListScrollGeometry.newestOffset(adjustedTopInset: 128), -128)
+        XCTAssertTrue(UIListScrollGeometry.isAtNewest(offset: -128, adjustedTopInset: 128))
+        XCTAssertTrue(UIListScrollGeometry.isAtNewest(offset: -127.2, adjustedTopInset: 128))
+        XCTAssertFalse(UIListScrollGeometry.isAtNewest(offset: 0, adjustedTopInset: 128))
+
+        XCTAssertEqual(
+            UIListScrollGeometry.oldestOffset(
+                contentHeight: 900,
+                viewportHeight: 500,
+                adjustedTopInset: 128,
+                adjustedBottomInset: 24
+            ),
+            424
+        )
+        XCTAssertTrue(
+            UIListScrollGeometry.isAtOldest(
+                offset: 423.5,
+                contentHeight: 900,
+                viewportHeight: 500,
+                adjustedTopInset: 128,
+                adjustedBottomInset: 24
+            )
+        )
+    }
+
     func testAttachmentSheetActionsReuseExistingPickerRoutes() {
         let model = InputViewModel()
         let action = model.inputViewAction()
