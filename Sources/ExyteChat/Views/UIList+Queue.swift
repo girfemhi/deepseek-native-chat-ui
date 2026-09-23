@@ -18,9 +18,9 @@ actor UpdateQueue {
     }
 
     private struct Job {
-        let work: @Sendable @MainActor () async -> Void
-        let continuation: CheckedContinuation<Void, Never>
-        let transactionContinuation: CheckedContinuation<Void, Never>?
+        var work: @Sendable @MainActor () async -> Void
+        var transactionContinuations: [CheckedContinuation<Void, Never>]
+        let coalescingKey: String?
     }
 
     private struct PendingTransaction {
@@ -89,26 +89,47 @@ actor UpdateQueue {
     // MARK: - Job scheduling
 
     func createJob(_ work: @escaping @Sendable @MainActor () async -> Void) {
-        Task {
-            await withCheckedContinuation { jobContinuation in
+        createJob(coalescingKey: nil, work)
+    }
 
-                var txContinuation: CheckedContinuation<Void, Never>? = nil
+    /// Replaces only the pending tail job with the same key.  A normal job is
+    /// therefore a hard ordering barrier for scrolling, pagination and
+    /// structural updates. Every coalesced transaction waiter is resumed when
+    /// the newest work completes.
+    func createCoalescingJob(
+        key: String,
+        _ work: @escaping @Sendable @MainActor () async -> Void
+    ) {
+        createJob(coalescingKey: key, work)
+    }
 
-                if let i = orphanTransactions.indices.first {
-                    let tx = orphanTransactions.remove(at: i)
-                    txContinuation = tx.continuation
-                }
+    private func createJob(
+        coalescingKey: String?,
+        _ work: @escaping @Sendable @MainActor () async -> Void
+    ) {
+        var transactionContinuation: CheckedContinuation<Void, Never>? = nil
 
-                queue.append(Job(
-                    work: work,
-                    continuation: jobContinuation,
-                    transactionContinuation: txContinuation
-                ))
-
-                debug("createJob")
-                processNextIfNeeded()
-            }
+        if let index = orphanTransactions.indices.first {
+            let transaction = orphanTransactions.remove(at: index)
+            transactionContinuation = transaction.continuation
         }
+
+        if let coalescingKey,
+           queue.last?.coalescingKey == coalescingKey {
+            queue[queue.count - 1].work = work
+            if let transactionContinuation {
+                queue[queue.count - 1].transactionContinuations.append(transactionContinuation)
+            }
+        } else {
+            queue.append(Job(
+                work: work,
+                transactionContinuations: transactionContinuation.map { [$0] } ?? [],
+                coalescingKey: coalescingKey
+            ))
+        }
+
+        debug("createJob")
+        processNextIfNeeded()
     }
 
     // MARK: - Execution
@@ -129,8 +150,7 @@ actor UpdateQueue {
     }
 
     private func completeCurrentJob(_ job: Job) async {
-        job.continuation.resume()
-        job.transactionContinuation?.resume()
+        job.transactionContinuations.forEach { $0.resume() }
 
         isProcessing = false
 
@@ -138,6 +158,16 @@ actor UpdateQueue {
 
         processNextIfNeeded()
     }
+
+    #if DEBUG
+    func pendingJobCountForTesting() -> Int {
+        queue.count + (isProcessing ? 1 : 0)
+    }
+
+    func orphanTransactionWaiterCountForTesting() -> Int {
+        orphanTransactions.lazy.filter { $0.continuation != nil }.count
+    }
+    #endif
 }
 
 public final class TableUpdateTransaction {

@@ -88,23 +88,46 @@ struct UIList<MessageContent: View>: UIViewRepresentable {
 
         context.coordinator.chatParams = chatParams
 
-        let needToUpdateSections = context.coordinator.latestUpdateSections != sections
+        let previouslyRequestedSections = context.coordinator.latestUpdateSections
+        let needToUpdateSections = previouslyRequestedSections != sections
         let needToScroll = pendingScrollTo != nil
+        let canCoalesceContentUpdate = !needToScroll && RowUpdatePlan.make(
+            oldSections: previouslyRequestedSections,
+            newSections: sections,
+            showsLastReadIndicator: chatParams.showLastReadIndicator
+        ) != nil
 
         //print("changes animationMode: \(animationMode) needToUpdateSections: \(needToUpdateSections), needToScroll: \(needToScroll), pendingScrollTo: \(pendingScrollTo)")
 
         guard needToUpdateSections || needToScroll else { return }
 
         context.coordinator.latestUpdateSections = sections
-        context.coordinator.updateInProgress = true
+        context.coordinator.latestRequestedRevision += 1
+        let revision = context.coordinator.latestRequestedRevision
 
         Task {
             let animationMode = await updateQueue.getAnimationMode()
             await updateQueue.markRealUpdate()
 
-            await updateQueue.createJob {
-                if needToUpdateSections {
-                    if animationMode == .none
+            let work: @Sendable @MainActor () async -> Void = {
+                context.coordinator.updateInProgress = true
+                var performedContentUpdate = false
+                let shouldApplySections = needToUpdateSections
+                    && revision > context.coordinator.lastAppliedRevision
+
+                if shouldApplySections {
+                    if let plan = RowUpdatePlan.make(
+                        oldSections: context.coordinator.sections,
+                        newSections: sections,
+                        showsLastReadIndicator: chatParams.showLastReadIndicator
+                    ) {
+                        updateContentRows(
+                            tableView,
+                            context.coordinator,
+                            plan: plan
+                        )
+                        performedContentUpdate = true
+                    } else if animationMode == .none
                         || context.coordinator.sections.isEmpty
                         || pendingScrollTo != nil { // if we're gonna scroll later, then update cells without animation, and animate scrolling later
                         updateTableNoAnimation(tableView, context.coordinator)
@@ -115,6 +138,12 @@ struct UIList<MessageContent: View>: UIViewRepresentable {
                         // || (transaction.animationMode == .natural && tableView.contentOffset != .zero) {
                         await performInsertPreservingOffset(tableView, context.coordinator)
                     }
+                    context.coordinator.lastAppliedRevision = revision
+                } else if needToUpdateSections {
+                    // A newer coalesced snapshot already won the race to the
+                    // queue.  Keep this job's scroll/transaction semantics,
+                    // but never paint the older message contents over it.
+                    performedContentUpdate = true
                 }
 
                 if needToScroll, let scrollToParams = pendingScrollTo {
@@ -137,12 +166,21 @@ struct UIList<MessageContent: View>: UIViewRepresentable {
                     }
                 }
 
-                tableView.beginUpdates()
                 context.coordinator.updateInProgress = false
+                let paginationWasInProgress = context.coordinator.paginationState.olderInProgress
+                    || context.coordinator.paginationState.newerInProgress
                 context.coordinator.paginationState.olderInProgress = false
                 context.coordinator.paginationState.newerInProgress = false
-                tableView.endUpdates()
-                tableView.relayoutHeadersFooters()
+
+                if paginationWasInProgress || !performedContentUpdate {
+                    tableView.relayoutHeadersFooters()
+                }
+            }
+
+            if canCoalesceContentUpdate {
+                await updateQueue.createCoalescingJob(key: "message-content", work)
+            } else {
+                await updateQueue.createJob(work)
             }
         }
     }
@@ -279,6 +317,92 @@ struct UIList<MessageContent: View>: UIViewRepresentable {
         }
 
         CATransaction.commit()
+    }
+
+    @MainActor
+    private func updateContentRows(
+        _ tableView: UITableView,
+        _ coordinator: Coordinator,
+        plan: RowUpdatePlan
+    ) {
+        let visibleRows = Set(tableView.indexPathsForVisibleRows ?? [])
+        let changedVisibleRows = plan.changedIndexPaths.filter(visibleRows.contains)
+        let wasPinnedToNewest = type == .conversation && tableView.contentOffset.y <= 1
+        let anchor = contentUpdateAnchor(
+            tableView,
+            coordinator: coordinator,
+            excluding: coordinator.lastReadIndicatorIndexPath
+        )
+
+        coordinator.sections = sections
+
+        guard !changedVisibleRows.isEmpty else { return }
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        UIView.performWithoutAnimation {
+            tableView.reconfigureRows(at: changedVisibleRows)
+            tableView.beginUpdates()
+            tableView.endUpdates()
+            tableView.layoutIfNeeded()
+        }
+
+        if wasPinnedToNewest {
+            tableView.setContentOffset(.zero, animated: false)
+        } else if let anchor,
+                  let newIndexPath = indexPath(
+                    for: anchor.messageID,
+                    in: sections,
+                    indicatorIndexPath: coordinator.lastReadIndicatorIndexPath
+                  ) {
+            let newRect = tableView.rectForRow(at: newIndexPath)
+            let newOffset = anchor.contentOffset + (newRect.minY - anchor.rowMinY)
+            let minimumOffset = -tableView.adjustedContentInset.top
+            let maximumOffset = max(
+                minimumOffset,
+                tableView.contentSize.height
+                    - tableView.bounds.height
+                    + tableView.adjustedContentInset.bottom
+            )
+            tableView.setContentOffset(
+                CGPoint(
+                    x: tableView.contentOffset.x,
+                    y: min(max(newOffset, minimumOffset), maximumOffset)
+                ),
+                animated: false
+            )
+        }
+
+        CATransaction.commit()
+
+        if !chatParams.isScrollEnabled {
+            tableContentHeight = tableView.contentSize.height
+        }
+    }
+
+    private struct ContentUpdateAnchor {
+        let messageID: String
+        let rowMinY: CGFloat
+        let contentOffset: CGFloat
+    }
+
+    @MainActor
+    private func contentUpdateAnchor(
+        _ tableView: UITableView,
+        coordinator: Coordinator,
+        excluding indicatorIndexPath: IndexPath?
+    ) -> ContentUpdateAnchor? {
+        let visibleRows = (tableView.indexPathsForVisibleRows ?? []).sorted()
+        guard let indexPath = visibleRows.first(where: { $0 != indicatorIndexPath }),
+              let row = coordinator.messageRow(at: indexPath) else {
+            return nil
+        }
+
+        return ContentUpdateAnchor(
+            messageID: row.id,
+            rowMinY: tableView.rectForRow(at: indexPath).minY,
+            contentOffset: tableView.contentOffset.y
+        )
     }
 
     @MainActor
@@ -501,6 +625,8 @@ struct UIList<MessageContent: View>: UIViewRepresentable {
 
         // helpers to avoid queueing same updates multiple times
         var latestUpdateSections: [MessagesSection] = []
+        var latestRequestedRevision = 0
+        var lastAppliedRevision = 0
 
         private let impactGenerator = UIImpactFeedbackGenerator(style: .heavy)
 
@@ -556,7 +682,7 @@ struct UIList<MessageContent: View>: UIViewRepresentable {
             return base
         }
 
-        private func messageRow(at indexPath: IndexPath) -> MessageRow? {
+        fileprivate func messageRow(at indexPath: IndexPath) -> MessageRow? {
             let indicatorIP = lastReadIndicatorIndexPath
             guard indexPath != indicatorIP else { return nil }
             let dataRow: Int
@@ -845,4 +971,3 @@ func performBatchTableUpdates(_ tableView: UITableView, closure: ()->()) async {
         }
     }
 }
-
