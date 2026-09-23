@@ -39,6 +39,14 @@ public final class ChatComposerState {
         inputViewModel.checkpoint()
     }
 
+    /// Replaces only the editable text while keeping media, documents,
+    /// recording, reply and location attachments intact. Hosts can use this
+    /// for suggestions or "edit and send" without mirroring every keystroke
+    /// through a parent observable model.
+    public func setText(_ text: String) {
+        inputViewModel.text = text
+    }
+
     /// Prepares the composer for background suspension. Pending permission
     /// requests are invalidated, active SDK recording is stopped and retained,
     /// and the resulting draft is synchronously checkpointed.

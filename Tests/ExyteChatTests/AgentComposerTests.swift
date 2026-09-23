@@ -507,6 +507,17 @@ final class AgentComposerTests: XCTestCase {
         XCTAssertEqual(model.text, "restored")
     }
 
+    func testComposerStateCanReplaceTextWithoutDiscardingAttachments() {
+        let state = ChatComposerState()
+        let document = DocumentItem(url: URL(fileURLWithPath: "/tmp/kept.pdf"), fileName: "kept.pdf")
+        state.inputViewModel.attachments.documents = [document]
+
+        state.setText("继续处理")
+
+        XCTAssertEqual(state.inputViewModel.text, "继续处理")
+        XCTAssertEqual(state.inputViewModel.attachments.documents, [document])
+    }
+
     func testDraftSnapshotRoundTripUsesStableIdentityAndEmitsEmpty() async {
         let media = Media(source: TestMediaSource(url: URL(fileURLWithPath: "/tmp/photo.jpg")))
         let document = DocumentItem(url: URL(fileURLWithPath: "/tmp/report.pdf"))
