@@ -44,7 +44,7 @@ public final class ChatComposerState {
     /// for suggestions or "edit and send" without mirroring every keystroke
     /// through a parent observable model.
     public func setText(_ text: String) {
-        inputViewModel.text = text
+        inputViewModel.setTextFromHost(text)
     }
 
     /// Prepares the composer for background suspension. Pending permission

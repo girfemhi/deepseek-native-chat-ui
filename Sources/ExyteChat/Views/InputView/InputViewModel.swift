@@ -78,6 +78,7 @@ final class InputViewModel: ObservableObject {
     private var sendAfterPasteImport = false
     private var ownedPastedURLs: Set<URL> = []
     private var retainedOwnedPastedURLs: Set<URL> = []
+    private var pendingHostTextPublication = false
     private let legacyMountID = UUID()
     private var activeMountIDs: Set<UUID> = []
 
@@ -108,6 +109,10 @@ final class InputViewModel: ObservableObject {
         restoreInitialDraftIfNeeded()
         lastPublishedDraftRevision = draftRevision
         isRestoringInitialDraft = false
+        if pendingHostTextPublication {
+            pendingHostTextPublication = false
+            flushDraftChange(force: true)
+        }
     }
 
     func onStop() {
@@ -160,6 +165,16 @@ final class InputViewModel: ObservableObject {
             }
         }
         cancelPasteImport()
+    }
+
+    func setTextFromHost(_ value: String) {
+        guard text != value else { return }
+        text = value
+        if subscriptions.isEmpty {
+            pendingHostTextPublication = true
+        } else {
+            scheduleDraftChange()
+        }
     }
 
     func discard(deleteOwnedRecordings: Bool = true) {

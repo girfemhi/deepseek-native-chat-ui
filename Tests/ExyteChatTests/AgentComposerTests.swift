@@ -511,11 +511,16 @@ final class AgentComposerTests: XCTestCase {
         let state = ChatComposerState()
         let document = DocumentItem(url: URL(fileURLWithPath: "/tmp/kept.pdf"), fileName: "kept.pdf")
         state.inputViewModel.attachments.documents = [document]
+        var snapshots: [DraftMessage] = []
+        state.inputViewModel.onDraftChange = { snapshots.append($0) }
 
         state.setText("继续处理")
+        state.inputViewModel.onStart()
 
         XCTAssertEqual(state.inputViewModel.text, "继续处理")
         XCTAssertEqual(state.inputViewModel.attachments.documents, [document])
+        XCTAssertEqual(snapshots.last?.text, "继续处理")
+        XCTAssertEqual(snapshots.last?.documents, [document])
     }
 
     func testDraftSnapshotRoundTripUsesStableIdentityAndEmitsEmpty() async {
