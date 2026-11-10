@@ -8,9 +8,54 @@
 import SwiftUI
 import ActivityIndicatorView
 
+@MainActor
 final class PaginationState: ObservableObject {
-    @Published var olderInProgress = false
-    @Published var newerInProgress = false
+    @Published private(set) var olderInProgress = false
+    @Published private(set) var newerInProgress = false
+    private var olderArmed = true
+    private var newerArmed = true
+
+    @discardableResult
+    func beginOlder() -> Bool {
+        guard !olderInProgress,olderArmed else { return false }
+        olderArmed = false
+        olderInProgress = true
+        return true
+    }
+
+    func finishOlder() {
+        olderInProgress = false
+    }
+
+    func rearmOlder() {
+        if !olderInProgress { olderArmed = true }
+    }
+
+    func completeOlder(after operation:@MainActor () async -> Void) async {
+        await operation()
+        finishOlder()
+    }
+
+    @discardableResult
+    func beginNewer() -> Bool {
+        guard !newerInProgress,newerArmed else { return false }
+        newerArmed = false
+        newerInProgress = true
+        return true
+    }
+
+    func finishNewer() {
+        newerInProgress = false
+    }
+
+    func rearmNewer() {
+        if !newerInProgress { newerArmed = true }
+    }
+
+    func completeNewer(after operation:@MainActor () async -> Void) async {
+        await operation()
+        finishNewer()
+    }
 }
 
 struct HeaderView<TopContent: View>: View {

@@ -188,12 +188,9 @@ struct UIList<MessageContent: View>: UIViewRepresentable {
                 }
 
                 context.coordinator.updateInProgress = false
-                let paginationWasInProgress = context.coordinator.paginationState.olderInProgress
-                    || context.coordinator.paginationState.newerInProgress
-                context.coordinator.paginationState.olderInProgress = false
-                context.coordinator.paginationState.newerInProgress = false
-
-                if paginationWasInProgress || !performedContentUpdate {
+                // Pagination belongs to the request lifecycle. A live message
+                // update must not unlock a still-running history request.
+                if !performedContentUpdate {
                     tableView.relayoutHeadersFooters()
                 }
             }
@@ -977,29 +974,33 @@ struct UIList<MessageContent: View>: UIViewRepresentable {
             }
         }
 
+        func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+            // A completed failure/empty page is retried only after the user
+            // starts a new gesture. Relayouts and live-token updates cannot
+            // immediately trigger the same boundary again.
+            paginationState.rearmOlder()
+            paginationState.rearmNewer()
+        }
+
         func performOlderPagination(_ tableView: UITableView) {
-            if let handler = chatParams.olderMessagesPaginationHandler {
-                Task { @MainActor in
-                    tableView.beginUpdates()
-                    paginationState.olderInProgress = true
-                    tableView.endUpdates()
-                    tableView.relayoutHeadersFooters()
-                    await handler.handleClosure()
-                    // set olderInProgress to false after table update is complete
-                }
+            guard let handler = chatParams.olderMessagesPaginationHandler,
+                  paginationState.beginOlder() else { return }
+            tableView.relayoutHeadersFooters()
+            Task { @MainActor in
+                await paginationState.completeOlder { await handler.handleClosure() }
+                // Failure and an empty page do not produce a message update,
+                // so request completion must remove the indicator itself.
+                tableView.relayoutHeadersFooters()
             }
         }
 
         func performNewerPagination(_ tableView: UITableView) {
-            if let handler = chatParams.newerMessagesPaginationHandler {
-                paginationState.newerInProgress = true
-                Task { @MainActor in
-                    tableView.beginUpdates()
-                    tableView.endUpdates()
-                    tableView.relayoutHeadersFooters()
-                    await handler.handleClosure()
-                    // set newerInProgress to false after table update is complete
-                }
+            guard let handler = chatParams.newerMessagesPaginationHandler,
+                  paginationState.beginNewer() else { return }
+            tableView.relayoutHeadersFooters()
+            Task { @MainActor in
+                await paginationState.completeNewer { await handler.handleClosure() }
+                tableView.relayoutHeadersFooters()
             }
         }
     }
